@@ -46,3 +46,9 @@ def test_load_profile_roundtrip():
     copy = LoadProfile.from_dict(profile.to_dict())
     assert copy.expected_w(T0) == 700
     assert copy.filled_bins == 1
+
+
+def test_solcast_datetime_objects():
+    attrs = {"detailedForecast": [{"period_start": T0, "pv_estimate": 1.0}]}
+    periods = parse_solcast_detailed(attrs)
+    assert abs(pv_kwh_between(periods, T0, T0 + timedelta(minutes=30)) - 0.5) < 1e-9

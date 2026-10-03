@@ -57,6 +57,16 @@ BATTERY_ENTITY_PATTERNS = {
     "inverter_state": "sensor.{p}_inverter_state",
 }
 
+# ESPHome stuurt alleen wijzigingen door: een stilstaande batterij meldt geen nieuw
+# AC-vermogen. Daarom telt een batterij als actueel zolang één van deze sensoren recent
+# een waarde gaf (netspanning en -frequentie veranderen vrijwel continu).
+BATTERY_HEARTBEAT_PATTERNS = (
+    "sensor.{p}_ac_power",
+    "sensor.{p}_ac_voltage",
+    "sensor.{p}_ac_frequency",
+    "sensor.{p}_battery_voltage",
+)
+
 # Binary sensors die betekenen dat een batterij niet gebruikt moet worden.
 BATTERY_ALARM_SUFFIXES = {
     "bat_communication_failure": "communicatiefout batterij",

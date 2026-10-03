@@ -27,8 +27,8 @@ def parse_solcast_detailed(attributes: dict[str, Any] | None, field: str = "pv_e
     for item in attributes.get("detailedForecast") or []:
         try:
             start = item["period_start"]
-            if isinstance(start, str):
-                start = datetime.fromisoformat(start)
+            if not isinstance(start, datetime):
+                start = datetime.fromisoformat(str(start))
             kw = float(item.get(field, item.get("pv_estimate", 0.0)) or 0.0)
         except (KeyError, TypeError, ValueError):
             continue
