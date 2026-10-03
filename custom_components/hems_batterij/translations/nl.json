@@ -1,0 +1,94 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "HEMS Batterij",
+        "description": "Kies de bronnen. Deze versie kijkt alleen mee en stuurt niets aan de batterijen.",
+        "data": {
+          "p1_power": "P1-vermogen (+ afname, - teruglevering)",
+          "pv_power": "PV-vermogen (een of meer sensoren)",
+          "pv_inverted": "PV-sensoren zijn negatief bij opwek",
+          "price_sensor": "Zonneplan-kwartierprijs",
+          "solcast_today": "Solcast voorspelling vandaag",
+          "solcast_tomorrow": "Solcast voorspelling morgen",
+          "batteries": "Batterijen (ESPHome-voorvoegsels, komma-gescheiden)"
+        }
+      }
+    },
+    "error": {
+      "no_batteries": "Geef minstens één batterij op.",
+      "battery_not_found": "Geen sensor <voorvoegsel>_battery_state_of_charge gevonden."
+    },
+    "abort": {
+      "already_configured": "HEMS Batterij is al ingesteld."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Instellingen",
+        "data": {
+          "wear_entity": "Entiteit met slijtagekosten (ct/kWh), mag leeg",
+          "wear_ct": "Slijtage als die entiteit ontbreekt (ct/kWh)",
+          "default_efficiency": "Rendement als meting ontbreekt (0,5-1,0)",
+          "netting_end": "Einde saldering (JJJJ-MM-DD)",
+          "default_load_w": "Huisverbruik zolang het profiel leeg is (W)",
+          "solcast_field": "Solcast-schatting",
+          "netting_full_value": "Saldering: terugleveren even veel waard als afnemen"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "modus": {
+        "name": "Modus",
+        "state": {
+          "zelfverbruik": "Zelfverbruik",
+          "net_laden": "Laden uit net",
+          "verkopen": "Verkopen",
+          "vasthouden": "Vasthouden",
+          "vangnet": "Vangnet"
+        }
+      },
+      "voorgesteld_vermogen": {
+        "name": "Voorgesteld vermogen"
+      },
+      "voorgesteld_vermogen_batterij": {
+        "name": "Voorgesteld vermogen {batterij}"
+      },
+      "werkelijk_vermogen": {
+        "name": "Werkelijk vermogen (HBC)"
+      },
+      "afwijking_hbc": {
+        "name": "Afwijking HBC t.o.v. voorstel"
+      },
+      "huisverbruik": {
+        "name": "Huisverbruik"
+      },
+      "energie_in_batterijen": {
+        "name": "Energie in batterijen"
+      },
+      "verwachte_besparing": {
+        "name": "Verwachte besparing plan"
+      },
+      "netkosten_vandaag": {
+        "name": "Netkosten vandaag"
+      },
+      "rendement": {
+        "name": "Rendement (gemeten)"
+      },
+      "minimale_spread": {
+        "name": "Minimale spread nu"
+      }
+    },
+    "binary_sensor": {
+      "meekijkmodus": {
+        "name": "Meekijkmodus"
+      },
+      "vangnet": {
+        "name": "Vangnet"
+      }
+    }
+  }
+}
