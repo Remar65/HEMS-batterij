@@ -28,6 +28,7 @@ from homeassistant.util import dt as dt_util
 from .const import (
     BATTERY_ALARM_SUFFIXES,
     BATTERY_ENTITY_PATTERNS,
+    BATTERY_HEARTBEAT_PATTERNS,
     CONF_BATTERIES,
     CONF_DEFAULT_EFFICIENCY,
     CONF_DEFAULT_LOAD_W,
@@ -231,9 +232,11 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                 for suffix, text in BATTERY_ALARM_SUFFIXES.items()
                 if (s := self._state(f"binary_sensor.{prefix}_{suffix}")) is not None and s.state == "on"
             ]
-            available = (
-                soc is not None and power is not None and self._fresh(power_state, STALE_BATTERY_SECONDS, now)
+            heartbeat = any(
+                self._fresh(self._state(pattern.format(p=prefix)), STALE_BATTERY_SECONDS, now)
+                for pattern in BATTERY_HEARTBEAT_PATTERNS
             )
+            available = soc is not None and power is not None and heartbeat
             batteries.append(
                 BatteryState(
                     name=prefix,

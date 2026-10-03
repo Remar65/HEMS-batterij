@@ -13,6 +13,13 @@ from typing import Any
 ZONNEPLAN_AMOUNT_DIVISOR = 10_000_000
 
 
+def _as_datetime(value: Any) -> datetime:
+    """Na een herstart geeft Zonneplan datetime-objecten in plaats van tekst."""
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value))
+
+
 @dataclass(frozen=True)
 class PriceSlot:
     """Eén prijsblok (meestal een kwartier)."""
@@ -34,8 +41,8 @@ def parse_zonneplan_forecast(attributes: dict[str, Any] | None) -> list[PriceSlo
     slots: list[PriceSlot] = []
     for item in raw:
         try:
-            start = datetime.fromisoformat(item["start_date"])
-            end = datetime.fromisoformat(item["end_date"])
+            start = _as_datetime(item["start_date"])
+            end = _as_datetime(item["end_date"])
             buy = item["price_tax_included"]["amount"] / ZONNEPLAN_AMOUNT_DIVISOR
             ex = item.get("price_tax_excluded", {}).get("amount")
             buy_ex = ex / ZONNEPLAN_AMOUNT_DIVISOR if ex is not None else buy

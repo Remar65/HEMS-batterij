@@ -41,3 +41,12 @@ def test_upcoming_slots_keeps_running_quarter():
 def test_empty_attributes():
     assert parse_zonneplan_forecast(None) == []
     assert parse_zonneplan_forecast({}) == []
+
+
+def test_parse_datetime_objects_after_restart():
+    # Na een HA-herstart staan in het attribuut datetime-objecten in plaats van tekst.
+    start = datetime.fromisoformat("2026-10-03T12:00:00+02:00")
+    end = datetime.fromisoformat("2026-10-03T12:15:00+02:00")
+    slots = parse_zonneplan_forecast({"forecast": [_item(start, end, 2564460, 1455979)]})
+    assert len(slots) == 1
+    assert slots[0].start == start
