@@ -19,9 +19,11 @@ from .const import (
     CONF_PRICE_SENSOR,
     CONF_PV_INVERTED,
     CONF_PV_POWER,
+    CONF_SOLAR_FIRST_CT,
     CONF_SOLCAST_FIELD,
     CONF_SOLCAST_TODAY,
     CONF_SOLCAST_TOMORROW,
+    CONF_TRADE_MARGIN_CT,
     CONF_WEAR_CT,
     CONF_WEAR_ENTITY,
     DEFAULTS,
@@ -96,6 +98,12 @@ class HemsOptionsFlow(OptionsFlow):
                 vol.Required(CONF_NETTING_END, default=current[CONF_NETTING_END]): str,
                 vol.Required(CONF_DEFAULT_LOAD_W, default=current[CONF_DEFAULT_LOAD_W]): vol.All(
                     vol.Coerce(float), vol.Range(min=0, max=10000)
+                ),
+                vol.Required(CONF_SOLAR_FIRST_CT, default=current[CONF_SOLAR_FIRST_CT]): vol.All(
+                    vol.Coerce(float), vol.Range(min=0, max=50)
+                ),
+                vol.Required(CONF_TRADE_MARGIN_CT, default=current[CONF_TRADE_MARGIN_CT]): vol.All(
+                    vol.Coerce(float), vol.Range(min=0, max=50)
                 ),
                 vol.Required(CONF_SOLCAST_FIELD, default=current[CONF_SOLCAST_FIELD]): vol.In(
                     ["pv_estimate", "pv_estimate10", "pv_estimate90"]

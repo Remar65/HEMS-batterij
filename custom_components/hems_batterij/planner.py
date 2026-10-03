@@ -9,6 +9,15 @@ alle bekende prijskwartieren. Per kwartier telt:
 - rendement: laden en ontladen kosten elk de wortel van het gemeten
   round-trip-rendement.
 
+Daarbovenop telt een rangorde die Marco heeft vastgelegd (geen echte kosten,
+alleen zwaarte in de afweging):
+
+1. zon zelf gebruiken: zon-overschot dat naar het net gaat terwijl het de
+   batterij in had gekund, krijgt een strafpost (`solar_first`);
+2. batterijen benutten voor het eigen huis;
+3. handelen: laden uit het net en ontladen naar het net moeten minstens
+   `trade_margin` per kWh extra opleveren voordat de planner het doet.
+
 Wat aan het einde van de horizon nog in de batterij zit, krijgt een
 restwaarde (gemiddelde inkoopprijs x ontlaadrendement - slijtage), zodat de
 planner de batterij niet om middernacht leeggooit omdat de prijzen van
@@ -147,6 +156,26 @@ def break_even_spread(buy_price: float, roundtrip_efficiency: float, wear: float
     return buy_price * (1.0 / roundtrip_efficiency - 1.0) + wear
 
 
+@dataclass(frozen=True)
+class Priorities:
+    """Rangorde zon > eigen huis > handel, uitgedrukt in €/kWh-strafposten."""
+
+    solar_first_eur_per_kwh: float = 0.10
+    trade_margin_eur_per_kwh: float = 0.03
+
+
+def _priority_penalty(grid_kwh: float, ac_kwh: float, slot: PlanSlot, prio: Priorities) -> float:
+    surplus = max(0.0, slot.pv_kwh - slot.load_kwh)
+    export = max(0.0, -grid_kwh)
+    solar_export = min(export, surplus)
+    battery_export = export - solar_export
+    grid_charge = max(0.0, -ac_kwh - surplus)
+    return (
+        solar_export * prio.solar_first_eur_per_kwh
+        + (battery_export + grid_charge) * prio.trade_margin_eur_per_kwh
+    )
+
+
 def _grid_cost(grid_kwh: float, slot: PlanSlot) -> float:
     return grid_kwh * slot.buy if grid_kwh >= 0 else grid_kwh * slot.sell
 
@@ -157,9 +186,11 @@ def make_plan(
     soc_now_kwh: float,
     created: datetime,
     step_kwh: float = 0.05,
+    priorities: Priorities | None = None,
 ) -> Plan:
     """Bereken het goedkoopste laad/ontlaadschema over alle slots."""
     plan = Plan(created=created)
+    prio = priorities or Priorities()
     if not slots:
         return plan
 
@@ -204,7 +235,12 @@ def make_plan(
                     ac = -delta * eta_d
                     wear = -delta * battery.wear_eur_per_kwh
                 grid = net_load - ac
-                cost = _grid_cost(grid, slot) + wear + abs(delta) * _TIE_BREAK_EUR_PER_KWH
+                cost = (
+                    _grid_cost(grid, slot)
+                    + wear
+                    + _priority_penalty(grid, ac, slot, prio)
+                    + abs(delta) * _TIE_BREAK_EUR_PER_KWH
+                )
                 total = cost + value_next[j]
                 if total < best:
                     best, best_j = total, j
@@ -246,7 +282,7 @@ def make_plan(
         plan.steps.append(step)
         k = j
 
-    _explain(plan, battery)
+    _explain(plan, battery, prio)
     return plan
 
 
@@ -287,7 +323,7 @@ def _classify(step: PlanStep, slot: PlanSlot, battery: BatteryModel) -> None:
         step.max_charge_w = full_charge_w
 
 
-def _explain(plan: Plan, battery: BatteryModel) -> None:
+def _explain(plan: Plan, battery: BatteryModel, prio: Priorities) -> None:
     """Geef elke stap een korte, leesbare reden."""
     steps = plan.steps
     for idx, step in enumerate(steps):
@@ -295,7 +331,10 @@ def _explain(plan: Plan, battery: BatteryModel) -> None:
         if step.mode == MODE_GRID_CHARGE:
             peak = max((s.buy for s in later), default=step.buy)
             spread = peak - step.buy
-            need = break_even_spread(step.buy, battery.roundtrip_efficiency, battery.wear_eur_per_kwh)
+            need = (
+                break_even_spread(step.buy, battery.roundtrip_efficiency, battery.wear_eur_per_kwh)
+                + prio.trade_margin_eur_per_kwh
+            )
             step.reason = (
                 f"laden uit net à {step.buy * 100:.1f} ct; later tot {peak * 100:.1f} ct "
                 f"(verschil {spread * 100:.1f} ct, nodig {need * 100:.1f} ct)"

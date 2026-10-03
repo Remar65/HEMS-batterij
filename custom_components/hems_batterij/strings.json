@@ -34,7 +34,9 @@
           "netting_end": "End of net metering (YYYY-MM-DD)",
           "default_load_w": "House load while profile is empty (W)",
           "solcast_field": "Solcast estimate",
-          "netting_full_value": "Net metering: export worth the same as import"
+          "netting_full_value": "Net metering: export worth the same as import",
+          "solar_first_ct": "Solar first: weight against exporting solar that could be stored (ct/kWh)",
+          "trade_margin_ct": "Trade margin: extra gain required for grid charging or selling (ct/kWh)"
         }
       }
     }

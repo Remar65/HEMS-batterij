@@ -38,9 +38,11 @@ from .const import (
     CONF_PRICE_SENSOR,
     CONF_PV_INVERTED,
     CONF_PV_POWER,
+    CONF_SOLAR_FIRST_CT,
     CONF_SOLCAST_FIELD,
     CONF_SOLCAST_TODAY,
     CONF_SOLCAST_TOMORROW,
+    CONF_TRADE_MARGIN_CT,
     CONF_WEAR_CT,
     CONF_WEAR_ENTITY,
     DECISION_LOG_SIZE,
@@ -66,6 +68,7 @@ from .planner import (
     BatteryModel,
     Plan,
     PlanSlot,
+    Priorities,
     break_even_spread,
     make_plan,
 )
@@ -328,7 +331,13 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                 )
             )
         soc_now = sum(b.soc_kwh for b in batteries if b.soc_pct is not None)
-        plan = await self.hass.async_add_executor_job(make_plan, slots, model, soc_now, now, PLAN_STEP_KWH)
+        priorities = Priorities(
+            solar_first_eur_per_kwh=float(self._conf(CONF_SOLAR_FIRST_CT)) / 100.0,
+            trade_margin_eur_per_kwh=float(self._conf(CONF_TRADE_MARGIN_CT)) / 100.0,
+        )
+        plan = await self.hass.async_add_executor_job(
+            make_plan, slots, model, soc_now, now, PLAN_STEP_KWH, priorities
+        )
         self._plan = plan
         saving = plan.expected_saving_eur(soc_now)
         self.data.expected_saving_eur = saving
