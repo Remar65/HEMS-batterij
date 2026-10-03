@@ -17,7 +17,7 @@
     },
     "error": {
       "no_batteries": "Enter at least one battery.",
-      "battery_not_found": "No <prefix>_battery_state_of_charge sensor found."
+      "battery_not_found": "No battery_state_of_charge sensor found for this prefix."
     },
     "abort": {
       "already_configured": "HEMS Batterij is already configured."

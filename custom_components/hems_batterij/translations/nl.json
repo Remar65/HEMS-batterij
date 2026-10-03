@@ -17,7 +17,7 @@
     },
     "error": {
       "no_batteries": "Geef minstens één batterij op.",
-      "battery_not_found": "Geen sensor <voorvoegsel>_battery_state_of_charge gevonden."
+      "battery_not_found": "Geen battery_state_of_charge-sensor gevonden voor dit voorvoegsel."
     },
     "abort": {
       "already_configured": "HEMS Batterij is al ingesteld."
