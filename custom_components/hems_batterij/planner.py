@@ -46,6 +46,8 @@ ALL_MODES = [MODE_SELF_CONSUMPTION, MODE_GRID_CHARGE, MODE_SELL, MODE_HOLD, MODE
 _TIE_BREAK_EUR_PER_KWH = 0.0001
 # Onder deze hoeveelheid (kWh per kwartier) telt iets als "niets".
 _TOLERANCE_KWH = 0.03
+# Vanaf zoveel verwacht zon-overschot (kWh, rest van de dag) telt verkopen als ruimte maken.
+_SOLAR_AHEAD_KWH = 0.5
 
 
 @dataclass(frozen=True)
@@ -164,16 +166,38 @@ class Priorities:
     trade_margin_eur_per_kwh: float = 0.03
 
 
-def _priority_penalty(grid_kwh: float, ac_kwh: float, slot: PlanSlot, prio: Priorities) -> float:
+def _priority_penalty(
+    grid_kwh: float, ac_kwh: float, slot: PlanSlot, prio: Priorities, solar_ahead: bool = False
+) -> float:
     surplus = max(0.0, slot.pv_kwh - slot.load_kwh)
     export = max(0.0, -grid_kwh)
     solar_export = min(export, surplus)
     battery_export = export - solar_export
     grid_charge = max(0.0, -ac_kwh - surplus)
+    # Batterij naar het net leegmaken terwijl er later vandaag nog zon-overschot komt, is
+    # vooral ruimte maken voor die zon. Dat telt even zwaar als zon terugleveren, zodat de
+    # zon-eerst-regel geen schijnwinst oplevert: alleen echte prijsverschillen beslissen dan.
+    sell_weight = max(prio.trade_margin_eur_per_kwh, prio.solar_first_eur_per_kwh if solar_ahead else 0.0)
     return (
         solar_export * prio.solar_first_eur_per_kwh
-        + (battery_export + grid_charge) * prio.trade_margin_eur_per_kwh
+        + battery_export * sell_weight
+        + grid_charge * prio.trade_margin_eur_per_kwh
     )
+
+
+def _solar_ahead_today(slots: list[PlanSlot], min_kwh: float = _SOLAR_AHEAD_KWH) -> list[bool]:
+    """Per slot: komt er vanaf hier nog vandaag (lokale dag) zon-overschot van betekenis?"""
+    result = [False] * len(slots)
+    remaining = 0.0
+    day = None
+    for i in range(len(slots) - 1, -1, -1):
+        slot = slots[i]
+        if slot.start.date() != day:
+            day = slot.start.date()
+            remaining = 0.0
+        remaining += max(0.0, slot.pv_kwh - slot.load_kwh)
+        result[i] = remaining >= min_kwh
+    return result
 
 
 def _grid_cost(grid_kwh: float, slot: PlanSlot) -> float:
@@ -211,6 +235,7 @@ def make_plan(
 
     n = len(slots)
     inf = float("inf")
+    solar_ahead = _solar_ahead_today(slots)
     # value[i][k] = minimale kosten vanaf slot i met laadtoestand levels[k]
     value_next = [-(lv - lo) * terminal_value for lv in levels]
     choices: list[list[int]] = [[0] * n_levels for _ in range(n)]
@@ -238,7 +263,7 @@ def make_plan(
                 cost = (
                     _grid_cost(grid, slot)
                     + wear
-                    + _priority_penalty(grid, ac, slot, prio)
+                    + _priority_penalty(grid, ac, slot, prio, solar_ahead[i])
                     + abs(delta) * _TIE_BREAK_EUR_PER_KWH
                 )
                 total = cost + value_next[j]

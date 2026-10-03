@@ -157,3 +157,22 @@ def test_full_day_is_fast_enough():
     start = time.perf_counter()
     make_plan(slots(prices, load=0.15), BATTERY, soc_now_kwh=5.0, created=T0, step_kwh=0.1)
     assert time.perf_counter() - start < 5.0
+
+
+def test_no_selling_just_to_make_room_for_solar():
+    # Les uit de HBC-ochtendverkoop: 's ochtends de batterij aan het net verkopen om
+    # ruimte te maken voor zon die anders voor 31 ct teruggeleverd wordt, kost geld als de
+    # avond duurder is. De zon-eerst-regel mag dat niet als winst laten tellen.
+    prices = [0.38] * 4 + [0.31] * 28 + [0.42] * 12
+    pv = [0.0] * 4 + [0.8] * 28 + [0.0] * 12
+    plan = make_plan(slots(prices, pv=pv, load=0.1), BATTERY, soc_now_kwh=8.2, created=T0)
+    assert all(s.mode != MODE_SELL for s in plan.steps[:4])
+    assert plan.steps[3].soc_end_kwh > 7.5
+
+
+def test_morning_sale_still_allowed_when_it_really_pays():
+    # Is de ochtendprijs echt hoog, dan blijft verkopen gewoon mogelijk.
+    prices = [0.70] * 4 + [0.31] * 28 + [0.42] * 12
+    pv = [0.0] * 4 + [0.8] * 28 + [0.0] * 12
+    plan = make_plan(slots(prices, pv=pv, load=0.1), BATTERY, soc_now_kwh=8.2, created=T0)
+    assert any(s.mode == MODE_SELL for s in plan.steps[:4])

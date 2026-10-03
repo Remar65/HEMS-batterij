@@ -66,7 +66,10 @@ BATTERY_ENTITY_PATTERNS = {
     "soc_min": "number.{p}_discharging_cutoff_capacity",
     "soc_max": "number.{p}_charging_cutoff_capacity",
     "inverter_state": "sensor.{p}_inverter_state",
+    # Staat deze op "disable", dan negeert de batterij elke aansturing via Modbus.
+    "rs485_mode": "select.{p}_rs485_control_mode",
 }
+RS485_DISABLED = "disable"
 
 # ESPHome stuurt alleen wijzigingen door: een stilstaande batterij meldt geen nieuw
 # AC-vermogen. Daarom telt een batterij als actueel zolang één van deze sensoren recent
