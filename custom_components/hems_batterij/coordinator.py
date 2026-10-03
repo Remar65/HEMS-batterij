@@ -32,15 +32,19 @@ from .const import (
     CONF_BATTERIES,
     CONF_DEFAULT_EFFICIENCY,
     CONF_DEFAULT_LOAD_W,
+    CONF_FEED_IN_COST_CT,
+    CONF_INVESTMENT_EUR,
     CONF_NETTING_ACTIVE,
     CONF_NETTING_END,
     CONF_P1_POWER,
     CONF_PRICE_SENSOR,
     CONF_PV_INVERTED,
     CONF_PV_POWER,
+    CONF_SOLAR_FIRST_CT,
     CONF_SOLCAST_FIELD,
     CONF_SOLCAST_TODAY,
     CONF_SOLCAST_TOMORROW,
+    CONF_TRADE_MARGIN_CT,
     CONF_WEAR_CT,
     CONF_WEAR_ENTITY,
     DECISION_LOG_SIZE,
@@ -66,6 +70,7 @@ from .planner import (
     BatteryModel,
     Plan,
     PlanSlot,
+    Priorities,
     break_even_spread,
     make_plan,
 )
@@ -93,6 +98,10 @@ class HemsData:
     break_even_ct: float | None = None
     expected_saving_eur: float | None = None
     actual_grid_cost_today_eur: float = 0.0
+    baseline_cost_today_eur: float = 0.0
+    saving_total_eur: float = 0.0
+    saving_since: datetime | None = None
+    investment_eur: float = 0.0
     profile_filled_bins: int = 0
     hbc_strategy: str | None = None
     decision_log: list[dict[str, Any]] = field(default_factory=list)
@@ -127,6 +136,9 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         self._quarter_seconds = 0.0
         self._cost_day: date | None = None
         self._cost_today = 0.0
+        self._baseline_today = 0.0
+        self._saving_total = 0.0
+        self._saving_since: datetime | None = None
         self._last_price_count = -1
         self.data = HemsData()
 
@@ -151,8 +163,12 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         if stored.get("cost_day") == today.isoformat():
             self._cost_day = today
             self._cost_today = float(stored.get("cost_today", 0.0))
+            self._baseline_today = float(stored.get("baseline_today", 0.0))
         else:
             self._cost_day = today
+        self._saving_total = float(stored.get("saving_total", 0.0))
+        since = stored.get("saving_since")
+        self._saving_since = dt_util.parse_datetime(since) if since else dt_util.now()
 
         self._unsubs.append(
             async_track_time_interval(self.hass, self._async_fast_tick, timedelta(seconds=FAST_LOOP_SECONDS))
@@ -179,6 +195,9 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             "profile": self.profile.to_dict(),
             "cost_day": self._cost_day.isoformat() if self._cost_day else None,
             "cost_today": self._cost_today,
+            "baseline_today": self._baseline_today,
+            "saving_total": self._saving_total,
+            "saving_since": self._saving_since.isoformat() if self._saving_since else None,
         }
 
     # ------------------------------------------------------------- read state
@@ -310,13 +329,17 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         # Tijdens saldering is terugleveren evenveel waard als afnemen; daarna (of als
         # die optie uit staat, bijvoorbeeld bij een jaaroverschot) de kale prijs.
         netting_end = self._netting_end() if self._conf(CONF_NETTING_ACTIVE) else now
+        feed_in_cost = float(self._conf(CONF_FEED_IN_COST_CT)) / 100.0
         slots: list[PlanSlot] = []
         for price in prices:
             start = max(price.start, now)
             end = price.end
             if (end - start).total_seconds() < 30:
                 continue
-            sell = price.buy if price.start < netting_end else price.buy_ex_tax
+            if price.start < netting_end:
+                sell = price.buy  # saldering: belasting komt terug
+            else:
+                sell = price.buy_ex_tax - feed_in_cost  # alleen kale prijs, minus eventuele kosten
             slots.append(
                 PlanSlot(
                     start=start,
@@ -328,7 +351,13 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                 )
             )
         soc_now = sum(b.soc_kwh for b in batteries if b.soc_pct is not None)
-        plan = await self.hass.async_add_executor_job(make_plan, slots, model, soc_now, now, PLAN_STEP_KWH)
+        priorities = Priorities(
+            solar_first_eur_per_kwh=float(self._conf(CONF_SOLAR_FIRST_CT)) / 100.0,
+            trade_margin_eur_per_kwh=float(self._conf(CONF_TRADE_MARGIN_CT)) / 100.0,
+        )
+        plan = await self.hass.async_add_executor_job(
+            make_plan, slots, model, soc_now, now, PLAN_STEP_KWH, priorities
+        )
         self._plan = plan
         saving = plan.expected_saving_eur(soc_now)
         self.data.expected_saving_eur = saving
@@ -363,7 +392,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         if p1 is not None:
             house = p1 + (pv or 0.0) + battery_total
 
-        self._learn(now, house, p1)
+        self._learn(now, house, p1, battery_total)
 
         step = self._plan.step_at(now) if self._plan else None
         target = (
@@ -403,13 +432,17 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                 step.buy, model.roundtrip_efficiency, model.wear_eur_per_kwh
             )
         data.actual_grid_cost_today_eur = self._cost_today
+        data.baseline_cost_today_eur = self._baseline_today
+        data.saving_total_eur = self._saving_total
+        data.saving_since = self._saving_since
+        data.investment_eur = float(self._conf(CONF_INVESTMENT_EUR))
         data.profile_filled_bins = self.profile.filled_bins
         data.hbc_strategy = hbc
         data.decision_log = list(self._log)
         self.async_set_updated_data(data)
 
-    def _learn(self, now: datetime, house_w: float | None, p1_w: float | None) -> None:
-        """Huisverbruik per kwartier leren en werkelijke netkosten optellen."""
+    def _learn(self, now: datetime, house_w: float | None, p1_w: float | None, battery_w: float) -> None:
+        """Huisverbruik per kwartier leren, en netkosten met en zonder batterij optellen."""
         dt = (now - self._last_tick).total_seconds() if self._last_tick else 0.0
         self._last_tick = now
         if dt <= 0 or dt > 60:
@@ -418,11 +451,18 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         if self._cost_day != now.date():
             self._cost_day = now.date()
             self._cost_today = 0.0
+            self._baseline_today = 0.0
         if p1_w is not None and dt and self._plan:
             step = self._plan.step_at(now)
             if step:
                 kwh = p1_w * dt / 3_600_000.0
-                self._cost_today += kwh * (step.buy if kwh >= 0 else step.sell)
+                actual = kwh * (step.buy if kwh >= 0 else step.sell)
+                # Zonder batterij was de netmeting P1 + wat de batterij leverde (of minus wat hij laadde).
+                base_kwh = (p1_w + battery_w) * dt / 3_600_000.0
+                baseline = base_kwh * (step.buy if base_kwh >= 0 else step.sell)
+                self._cost_today += actual
+                self._baseline_today += baseline
+                self._saving_total += baseline - actual
 
         quarter = now.replace(minute=(now.minute // 15) * 15, second=0, microsecond=0)
         if self._quarter_start is None:

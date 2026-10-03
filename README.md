@@ -23,6 +23,13 @@ samen. Hij rekent met:
 - slijtage per ontladen kWh (uit `input_number.batterij_slijtagekosten`, nu 4,7 ct);
 - de laad/ontlaadgrenzen en SoC-grenzen die op de batterijen zelf staan.
 
+Daarnaast geldt Marco's rangorde, als marges in dezelfde afweging (instelbaar):
+
+- **Zon eerst** (10 ct/kWh): zon-overschot terugleveren terwijl het opgeslagen had kunnen
+  worden telt als nadeel, zodat zon bijna altijd de batterij in gaat.
+- **Handelsdrempel** (3 ct/kWh): laden uit en ontladen naar het net alleen als het per kWh
+  minstens zoveel meer oplevert dan verliezen + slijtage. Kleine dagwinstjes vallen zo weg.
+
 Wat aan het einde van de horizon nog in de batterij zit krijgt een restwaarde, zodat hij niet
 om middernacht leeggegooid wordt omdat de prijzen van morgen nog onbekend zijn.
 
@@ -64,6 +71,8 @@ moment in het attribuut `beslislog` van de modus-sensor en in het HA-log.
 | Energie in batterijen | kWh in beide samen, en verwachte stand aan het einde van het plan |
 | Verwachte besparing plan | t.o.v. geen batterij, over de bekende prijzen |
 | Netkosten vandaag | werkelijke netkosten op basis van P1 × kwartierprijs |
+| Besparing batterijen vandaag | netkosten zonder batterij − met batterij (zoals HBC nu stuurt) |
+| Terugverdientijd | aanschafprijs ÷ gemeten besparing per jaar (pas zinvol na een paar weken) |
 | Rendement (gemeten) | gewogen round-trip-rendement en gebruikte slijtage |
 | Minimale spread nu | break-even prijsverschil voor laden uit het net, in ct |
 | Meekijkmodus | staat in deze versie altijd aan |

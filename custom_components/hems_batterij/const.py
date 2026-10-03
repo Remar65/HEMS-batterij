@@ -26,6 +26,10 @@ CONF_NETTING_END = "netting_end"
 CONF_NETTING_ACTIVE = "netting_full_value"
 CONF_DEFAULT_LOAD_W = "default_load_w"
 CONF_SOLCAST_FIELD = "solcast_field"
+CONF_SOLAR_FIRST_CT = "solar_first_ct"
+CONF_TRADE_MARGIN_CT = "trade_margin_ct"
+CONF_INVESTMENT_EUR = "investment_eur"
+CONF_FEED_IN_COST_CT = "feed_in_cost_ct"
 
 DEFAULTS = {
     CONF_P1_POWER: "sensor.p1_meter_power",
@@ -42,6 +46,13 @@ DEFAULTS = {
     CONF_NETTING_ACTIVE: True,
     CONF_DEFAULT_LOAD_W: 400,
     CONF_SOLCAST_FIELD: "pv_estimate",
+    # Rangorde (Marco, 3 okt 2026): zon zelf gebruiken > batterij voor eigen huis > handel.
+    CONF_SOLAR_FIRST_CT: 10.0,
+    CONF_TRADE_MARGIN_CT: 3.0,
+    # Aanschaf M1 (€1450) + M2 (€1175), voor de terugverdientijd.
+    CONF_INVESTMENT_EUR: 2625.0,
+    # Terugleverkosten per kWh na de saldering (nu nog onbekend, dus 0).
+    CONF_FEED_IN_COST_CT: 0.0,
 }
 
 # Entiteiten per Marstek (ESPHome LilyGo), afgeleid van het voorvoegsel, bijv. "marstek_m1".

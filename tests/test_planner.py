@@ -9,6 +9,7 @@ from custom_components.hems_batterij.planner import (
     MODE_SELL,
     BatteryModel,
     PlanSlot,
+    Priorities,
     break_even_spread,
     make_plan,
 )
@@ -52,14 +53,43 @@ def test_charges_cheap_and_covers_expensive_load():
     assert plan.expected_saving_eur(1.23) > 0.5
 
 
-def test_pv_exported_during_netting_when_spread_too_small():
-    # Met saldering is terugleveren evenveel waard als afnemen. Opslaan kost
-    # rendement en slijtage, dus bij een klein prijsverschil levert de planner
-    # de zon liever terug dan dat hij de batterij vult.
+def test_solar_first_stores_pv_even_with_small_spread():
+    # Rangorde: zon zelf gebruiken gaat voor. Ook bij een klein prijsverschil en
+    # saldering gaat het zon-overschot de batterij in in plaats van naar het net.
     prices = [0.25] * 8 + [0.30] * 8
     pv = [1.0] * 8 + [0.0] * 8
     plan = make_plan(slots(prices, pv=pv, load=0.1), BATTERY, soc_now_kwh=1.23, created=T0)
+    assert plan.steps[7].soc_end_kwh > 5.0
+    assert all(s.mode == MODE_SELF_CONSUMPTION for s in plan.steps[:8])
+
+
+def test_without_solar_first_pv_is_exported_when_spread_too_small():
+    # Zonder die voorrang is terugleveren met saldering voordeliger dan opslaan.
+    prices = [0.25] * 8 + [0.30] * 8
+    pv = [1.0] * 8 + [0.0] * 8
+    plan = make_plan(
+        slots(prices, pv=pv, load=0.1),
+        BATTERY,
+        soc_now_kwh=1.23,
+        created=T0,
+        priorities=Priorities(solar_first_eur_per_kwh=0.0, trade_margin_eur_per_kwh=0.0),
+    )
     assert plan.steps[7].soc_end_kwh < 1.5
+
+
+def test_trade_margin_blocks_marginal_arbitrage():
+    # Verschil net boven break-even (~10,7 ct): zonder drempel handelen, met 3 ct drempel niet.
+    prices = [0.25] * 8 + [0.365] * 8
+    free = make_plan(
+        slots(prices, load=0.1),
+        BATTERY,
+        soc_now_kwh=1.23,
+        created=T0,
+        priorities=Priorities(trade_margin_eur_per_kwh=0.0),
+    )
+    strict = make_plan(slots(prices, load=0.1), BATTERY, soc_now_kwh=1.23, created=T0)
+    assert any(s.mode == MODE_GRID_CHARGE for s in free.steps)
+    assert all(s.mode != MODE_GRID_CHARGE for s in strict.steps)
 
 
 def test_small_spread_does_not_trade():

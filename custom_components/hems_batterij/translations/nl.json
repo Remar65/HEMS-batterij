@@ -34,7 +34,11 @@
           "netting_end": "Einde saldering (JJJJ-MM-DD)",
           "default_load_w": "Huisverbruik zolang het profiel leeg is (W)",
           "solcast_field": "Solcast-schatting",
-          "netting_full_value": "Saldering: terugleveren even veel waard als afnemen"
+          "netting_full_value": "Saldering: terugleveren even veel waard als afnemen",
+          "solar_first_ct": "Zon eerst: zwaarte tegen terugleveren van zon die opgeslagen had kunnen worden (ct/kWh)",
+          "trade_margin_ct": "Handelsdrempel: extra opbrengst nodig voor laden uit of verkopen aan het net (ct/kWh)",
+          "investment_eur": "Aanschafprijs batterijen (€)",
+          "feed_in_cost_ct": "Terugleverkosten na einde saldering (ct/kWh)"
         }
       }
     }
@@ -80,6 +84,12 @@
       },
       "minimale_spread": {
         "name": "Minimale spread nu"
+      },
+      "besparing_vandaag": {
+        "name": "Besparing batterijen vandaag"
+      },
+      "terugverdientijd": {
+        "name": "Terugverdientijd"
       }
     },
     "binary_sensor": {
