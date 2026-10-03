@@ -30,6 +30,10 @@ Daarnaast geldt Marco's rangorde, als marges in dezelfde afweging (instelbaar):
 - **Handelsdrempel** (3 ct/kWh): laden uit en ontladen naar het net alleen als het per kWh
   minstens zoveel meer oplevert dan verliezen + slijtage. Kleine dagwinstjes vallen zo weg.
 
+Verkopen aan het net terwijl er later die dag nog zon-overschot komt, telt even zwaar als zon
+terugleveren. Anders zou "zon eerst" de planner verleiden om 's ochtends de batterij te verkopen
+alleen om ruimte te maken voor de zon; nu beslist dan alleen het echte prijsverschil.
+
 Wat aan het einde van de horizon nog in de batterij zit krijgt een restwaarde, zodat hij niet
 om middernacht leeggegooid wordt omdat de prijzen van morgen nog onbekend zijn.
 
@@ -50,7 +54,7 @@ bij gelijke stand die met het beste rendement), grotere vermogens naar rato van 
 energie of ruimte, binnen de limieten per batterij.
 
 **Vangnetten.** P1 ouder dan 30 s, batterijdata ouder dan 120 s, BMS-beveiliging,
-communicatiefout, over/onderspanning, te warm/koud: die batterij doet niet mee, en zonder P1 of
+communicatiefout, over/onderspanning, te warm/koud, RS485-besturing uit: die batterij doet niet mee, en zonder P1 of
 zonder bruikbare batterij wordt niets voorgesteld. Ontbreekt alleen het plan (geen prijzen),
 dan valt hij terug op gewoon zelfverbruik. Laden wordt teruggeschroefd als de netafname boven
 16 kW (3x25A met marge) zou komen.

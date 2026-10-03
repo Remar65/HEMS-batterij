@@ -133,3 +133,20 @@ async def test_saving_counts_battery_contribution(hass: HomeAssistant) -> None:
     expected = 500 * 36 / 3_600_000 * step.buy
     assert abs((coordinator._saving_total - start_saving) - expected) < 1e-9
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_rs485_disabled_counts_as_safety(hass: HomeAssistant) -> None:
+    # Les uit de HBC-automatisering "RS485 control mode uitgeschakeld": staat de
+    # Modbus-besturing uit, dan volgt die batterij geen opdrachten en telt hij niet mee.
+    _set_states(hass)
+    hass.states.async_set("select.marstek_m2_rs485_control_mode", "disable")
+    hass.states.async_set("select.marstek_m1_rs485_control_mode", "enable")
+    entry = MockConfigEntry(domain=DOMAIN, data={"batteries": "marstek_m1, marstek_m2"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    result = entry.runtime_data.data.result
+    assert any("marstek_m2: RS485" in r for r in result.safety_reasons)
+    assert not any("marstek_m1" in r for r in result.safety_reasons)
+    assert result.per_battery_w["marstek_m2"] == 0
+    assert await hass.config_entries.async_unload(entry.entry_id)

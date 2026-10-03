@@ -52,6 +52,7 @@ from .const import (
     DOMAIN,
     FAST_LOOP_SECONDS,
     PLAN_STEP_KWH,
+    RS485_DISABLED,
     STALE_BATTERY_SECONDS,
     STALE_P1_SECONDS,
     STORAGE_KEY,
@@ -251,6 +252,9 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                 for suffix, text in BATTERY_ALARM_SUFFIXES.items()
                 if (s := self._state(f"binary_sensor.{prefix}_{suffix}")) is not None and s.state == "on"
             ]
+            rs485 = self._state(ent["rs485_mode"])
+            if rs485 is not None and rs485.state == RS485_DISABLED:
+                alarms.append("RS485-besturing staat uit (batterij volgt geen opdrachten)")
             heartbeat = any(
                 self._fresh(self._state(pattern.format(p=prefix)), STALE_BATTERY_SECONDS, now)
                 for pattern in BATTERY_HEARTBEAT_PATTERNS
