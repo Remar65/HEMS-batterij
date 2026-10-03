@@ -89,6 +89,8 @@ async def test_setup_creates_sensors_and_never_calls_services(hass: HomeAssistan
     assert float(state_of("huisverbruik").state) == 1150
     assert float(state_of("verwachte_besparing").state) > 0
     assert state_of("voorstel_marstek_m1") is not None
+    assert state_of("besparing_vandaag") is not None
+    assert state_of("terugverdientijd").attributes["investering"] == 2625.0
 
     shadow = registry.async_get_entity_id("binary_sensor", DOMAIN, f"{entry.entry_id}_meekijkmodus")
     assert hass.states.get(shadow).state == "on"
@@ -112,4 +114,22 @@ async def test_missing_prices_gives_fallback(hass: HomeAssistant) -> None:
     state = hass.states.get(entity_id)
     assert state.state == "zelfverbruik"
     assert "geen plan" in state.attributes["reden"]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_saving_counts_battery_contribution(hass: HomeAssistant) -> None:
+    _set_states(hass)
+    entry = MockConfigEntry(domain=DOMAIN, data={"batteries": "marstek_m1, marstek_m2"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data
+    start_saving = coordinator._saving_total
+    now = dt_util.now()
+    # Batterij levert 500 W, net nog 100 W afname: zonder batterij was het 600 W afname.
+    coordinator._last_tick = now
+    coordinator._learn(now + timedelta(seconds=36), 600, 100, 500)
+    step = coordinator._plan.step_at(now + timedelta(seconds=36))
+    expected = 500 * 36 / 3_600_000 * step.buy
+    assert abs((coordinator._saving_total - start_saving) - expected) < 1e-9
     assert await hass.config_entries.async_unload(entry.entry_id)

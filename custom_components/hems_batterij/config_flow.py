@@ -13,6 +13,7 @@ from .const import (
     CONF_BATTERIES,
     CONF_DEFAULT_EFFICIENCY,
     CONF_DEFAULT_LOAD_W,
+    CONF_INVESTMENT_EUR,
     CONF_NETTING_ACTIVE,
     CONF_NETTING_END,
     CONF_P1_POWER,
@@ -104,6 +105,9 @@ class HemsOptionsFlow(OptionsFlow):
                 ),
                 vol.Required(CONF_TRADE_MARGIN_CT, default=current[CONF_TRADE_MARGIN_CT]): vol.All(
                     vol.Coerce(float), vol.Range(min=0, max=50)
+                ),
+                vol.Required(CONF_INVESTMENT_EUR, default=current[CONF_INVESTMENT_EUR]): vol.All(
+                    vol.Coerce(float), vol.Range(min=0, max=100000)
                 ),
                 vol.Required(CONF_SOLCAST_FIELD, default=current[CONF_SOLCAST_FIELD]): vol.In(
                     ["pv_estimate", "pv_estimate10", "pv_estimate90"]

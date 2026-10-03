@@ -17,6 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from . import HemsConfigEntry
 from .const import DOMAIN, NAME, SHADOW_MODE
@@ -59,6 +60,19 @@ def _deviation(d: HemsData) -> float | None:
 
 def _round(value: float | None, digits: int = 0) -> float | None:
     return None if value is None else round(value, digits)
+
+
+def _payback(d: HemsData) -> tuple[float | None, float | None]:
+    """Besparing per jaar en terugverdientijd, geëxtrapoleerd uit de meting tot nu toe."""
+    if d.saving_since is None:
+        return None, None
+    days = (dt_util.now() - d.saving_since).total_seconds() / 86400.0
+    if days < 1.0:
+        return None, None
+    per_year = d.saving_total_eur / days * 365.0
+    if per_year <= 0:
+        return round(per_year, 0), None
+    return round(per_year, 0), round(d.investment_eur / per_year, 1)
 
 
 SENSORS: tuple[HemsSensorDescription, ...] = (
@@ -130,6 +144,29 @@ SENSORS: tuple[HemsSensorDescription, ...] = (
         translation_key="netkosten_vandaag",
         native_unit_of_measurement="€",
         value_fn=lambda d: round(d.actual_grid_cost_today_eur, 2),
+    ),
+    HemsSensorDescription(
+        key="besparing_vandaag",
+        translation_key="besparing_vandaag",
+        native_unit_of_measurement="€",
+        value_fn=lambda d: round(d.baseline_cost_today_eur - d.actual_grid_cost_today_eur, 2),
+        attrs_fn=lambda d: {
+            "netkosten_met_batterij": round(d.actual_grid_cost_today_eur, 2),
+            "netkosten_zonder_batterij": round(d.baseline_cost_today_eur, 2),
+        },
+    ),
+    HemsSensorDescription(
+        key="terugverdientijd",
+        translation_key="terugverdientijd",
+        native_unit_of_measurement="jaar",
+        value_fn=lambda d: _payback(d)[1],
+        attrs_fn=lambda d: {
+            "besparing_totaal": round(d.saving_total_eur, 2),
+            "gemeten_sinds": d.saving_since.isoformat(timespec="minutes") if d.saving_since else None,
+            "besparing_per_jaar": _payback(d)[0],
+            "investering": d.investment_eur,
+            "let_op": "bij minder dan 30 dagen meting is dit een grove schatting",
+        },
     ),
     HemsSensorDescription(
         key="rendement",
