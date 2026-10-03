@@ -13,6 +13,7 @@ from .const import (
     CONF_BATTERIES,
     CONF_DEFAULT_EFFICIENCY,
     CONF_DEFAULT_LOAD_W,
+    CONF_FEED_IN_COST_CT,
     CONF_INVESTMENT_EUR,
     CONF_NETTING_ACTIVE,
     CONF_NETTING_END,
@@ -97,6 +98,9 @@ class HemsOptionsFlow(OptionsFlow):
                 ),
                 vol.Required(CONF_NETTING_ACTIVE, default=current[CONF_NETTING_ACTIVE]): bool,
                 vol.Required(CONF_NETTING_END, default=current[CONF_NETTING_END]): str,
+                vol.Required(CONF_FEED_IN_COST_CT, default=current[CONF_FEED_IN_COST_CT]): vol.All(
+                    vol.Coerce(float), vol.Range(min=0, max=50)
+                ),
                 vol.Required(CONF_DEFAULT_LOAD_W, default=current[CONF_DEFAULT_LOAD_W]): vol.All(
                     vol.Coerce(float), vol.Range(min=0, max=10000)
                 ),

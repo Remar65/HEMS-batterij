@@ -32,6 +32,7 @@ from .const import (
     CONF_BATTERIES,
     CONF_DEFAULT_EFFICIENCY,
     CONF_DEFAULT_LOAD_W,
+    CONF_FEED_IN_COST_CT,
     CONF_INVESTMENT_EUR,
     CONF_NETTING_ACTIVE,
     CONF_NETTING_END,
@@ -328,13 +329,17 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         # Tijdens saldering is terugleveren evenveel waard als afnemen; daarna (of als
         # die optie uit staat, bijvoorbeeld bij een jaaroverschot) de kale prijs.
         netting_end = self._netting_end() if self._conf(CONF_NETTING_ACTIVE) else now
+        feed_in_cost = float(self._conf(CONF_FEED_IN_COST_CT)) / 100.0
         slots: list[PlanSlot] = []
         for price in prices:
             start = max(price.start, now)
             end = price.end
             if (end - start).total_seconds() < 30:
                 continue
-            sell = price.buy if price.start < netting_end else price.buy_ex_tax
+            if price.start < netting_end:
+                sell = price.buy  # saldering: belasting komt terug
+            else:
+                sell = price.buy_ex_tax - feed_in_cost  # alleen kale prijs, minus eventuele kosten
             slots.append(
                 PlanSlot(
                     start=start,

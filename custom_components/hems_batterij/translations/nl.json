@@ -37,7 +37,8 @@
           "netting_full_value": "Saldering: terugleveren even veel waard als afnemen",
           "solar_first_ct": "Zon eerst: zwaarte tegen terugleveren van zon die opgeslagen had kunnen worden (ct/kWh)",
           "trade_margin_ct": "Handelsdrempel: extra opbrengst nodig voor laden uit of verkopen aan het net (ct/kWh)",
-          "investment_eur": "Aanschafprijs batterijen (€)"
+          "investment_eur": "Aanschafprijs batterijen (€)",
+          "feed_in_cost_ct": "Terugleverkosten na einde saldering (ct/kWh)"
         }
       }
     }
