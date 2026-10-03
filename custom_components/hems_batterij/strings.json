@@ -1,0 +1,94 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "HEMS Batterij",
+        "description": "Pick the sources. This version only observes and never controls the batteries.",
+        "data": {
+          "p1_power": "P1 power (+ import, - export)",
+          "pv_power": "PV power (one or more sensors)",
+          "pv_inverted": "PV sensors are negative when producing",
+          "price_sensor": "Zonneplan quarter-hour price",
+          "solcast_today": "Solcast forecast today",
+          "solcast_tomorrow": "Solcast forecast tomorrow",
+          "batteries": "Batteries (ESPHome prefixes, comma separated)"
+        }
+      }
+    },
+    "error": {
+      "no_batteries": "Enter at least one battery.",
+      "battery_not_found": "No battery_state_of_charge sensor found for this prefix."
+    },
+    "abort": {
+      "already_configured": "HEMS Batterij is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Settings",
+        "data": {
+          "wear_entity": "Entity with wear cost (ct/kWh), optional",
+          "wear_ct": "Wear cost fallback (ct/kWh)",
+          "default_efficiency": "Efficiency fallback (0.5-1.0)",
+          "netting_end": "End of net metering (YYYY-MM-DD)",
+          "default_load_w": "House load while profile is empty (W)",
+          "solcast_field": "Solcast estimate",
+          "netting_full_value": "Net metering: export worth the same as import"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "modus": {
+        "name": "Mode",
+        "state": {
+          "zelfverbruik": "Self-consumption",
+          "net_laden": "Grid charge",
+          "verkopen": "Sell",
+          "vasthouden": "Hold",
+          "vangnet": "Safety"
+        }
+      },
+      "voorgesteld_vermogen": {
+        "name": "Proposed power"
+      },
+      "voorgesteld_vermogen_batterij": {
+        "name": "Proposed power {batterij}"
+      },
+      "werkelijk_vermogen": {
+        "name": "Actual power (HBC)"
+      },
+      "afwijking_hbc": {
+        "name": "HBC deviation from proposal"
+      },
+      "huisverbruik": {
+        "name": "House load"
+      },
+      "energie_in_batterijen": {
+        "name": "Energy in batteries"
+      },
+      "verwachte_besparing": {
+        "name": "Expected plan saving"
+      },
+      "netkosten_vandaag": {
+        "name": "Grid cost today"
+      },
+      "rendement": {
+        "name": "Efficiency (measured)"
+      },
+      "minimale_spread": {
+        "name": "Break-even spread now"
+      }
+    },
+    "binary_sensor": {
+      "meekijkmodus": {
+        "name": "Shadow mode"
+      },
+      "vangnet": {
+        "name": "Safety net"
+      }
+    }
+  }
+}
