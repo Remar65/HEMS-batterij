@@ -156,6 +156,39 @@ SENSORS: tuple[HemsSensorDescription, ...] = (
         },
     ),
     HemsSensorDescription(
+        key="energie_schaduwbatterij",
+        translation_key="energie_schaduwbatterij",
+        device_class=SensorDeviceClass.ENERGY_STORAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        value_fn=lambda d: _round(d.shadow_soc_kwh, 2),
+        attrs_fn=lambda d: {
+            "uitleg": "laadstand als HEMS de batterijen zelf had aangestuurd",
+            "echte_stand_kwh": _round(d.soc_total_kwh, 2),
+            "voorstel_w": d.shadow_result.total_w if d.shadow_result else None,
+            "modus": d.shadow_result.mode if d.shadow_result else None,
+            "sinds": d.shadow_since.isoformat(timespec="minutes") if d.shadow_since else None,
+        },
+    ),
+    HemsSensorDescription(
+        key="besparing_hems_vandaag",
+        translation_key="besparing_hems_vandaag",
+        native_unit_of_measurement="€",
+        value_fn=lambda d: (
+            round(d.baseline_cost_today_eur - d.shadow_cost_today_eur, 2)
+            if d.shadow_soc_kwh is not None
+            else None
+        ),
+        attrs_fn=lambda d: {
+            "netkosten_met_hems": round(d.shadow_cost_today_eur, 2),
+            "netkosten_met_hbc": round(d.actual_grid_cost_today_eur, 2),
+            "netkosten_zonder_batterij": round(d.baseline_cost_today_eur, 2),
+            "hems_beter_dan_hbc": round(d.actual_grid_cost_today_eur - d.shadow_cost_today_eur, 2),
+            "besparing_hems_totaal": round(d.shadow_saving_total_eur, 2),
+            "sinds": d.shadow_since.isoformat(timespec="minutes") if d.shadow_since else None,
+        },
+    ),
+    HemsSensorDescription(
         key="terugverdientijd",
         translation_key="terugverdientijd",
         native_unit_of_measurement="jaar",
