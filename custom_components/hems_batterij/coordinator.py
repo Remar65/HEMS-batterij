@@ -53,6 +53,7 @@ from .const import (
     FAST_LOOP_SECONDS,
     PLAN_STEP_KWH,
     RS485_DISABLED,
+    SHADOW_MODE,
     STALE_BATTERY_SECONDS,
     STALE_P1_SECONDS,
     STORAGE_KEY,
@@ -76,10 +77,15 @@ from .planner import (
     make_plan,
 )
 from .prices import parse_zonneplan_forecast, upcoming_slots
+from .shadow import ShadowBattery
 
 _LOGGER = logging.getLogger(__name__)
 
 HBC_STRATEGY_ENTITY = "input_select.house_battery_strategy"
+
+# Een opgeslagen schaduwstand die ouder is dan dit, is na een herstart niet meer
+# te vertrouwen: dan opnieuw beginnen bij de echte stand.
+SHADOW_MAX_RESTORE_SECONDS = 2 * 3600
 
 
 @dataclass
@@ -106,6 +112,10 @@ class HemsData:
     profile_filled_bins: int = 0
     hbc_strategy: str | None = None
     decision_log: list[dict[str, Any]] = field(default_factory=list)
+    shadow_soc_kwh: float | None = None
+    shadow_cost_today_eur: float = 0.0
+    shadow_saving_total_eur: float = 0.0
+    shadow_since: datetime | None = None
 
 
 def _float_state(state: State | None) -> float | None:
@@ -141,6 +151,10 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         self._saving_total = 0.0
         self._saving_since: datetime | None = None
         self._last_price_count = -1
+        self.shadow = ShadowBattery()
+        self._shadow_cost_today = 0.0
+        self._shadow_saving_total = 0.0
+        self._prev_result: ControlResult | None = None
         self.data = HemsData()
 
     # ------------------------------------------------------------------ config
@@ -165,11 +179,18 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             self._cost_day = today
             self._cost_today = float(stored.get("cost_today", 0.0))
             self._baseline_today = float(stored.get("baseline_today", 0.0))
+            self._shadow_cost_today = float(stored.get("shadow_cost_today", self._cost_today))
         else:
             self._cost_day = today
         self._saving_total = float(stored.get("saving_total", 0.0))
         since = stored.get("saving_since")
         self._saving_since = dt_util.parse_datetime(since) if since else dt_util.now()
+        self._shadow_saving_total = float(stored.get("shadow_saving_total", 0.0))
+        saved_at = dt_util.parse_datetime(stored.get("saved_at") or "")
+        if saved_at and (dt_util.now() - saved_at).total_seconds() <= SHADOW_MAX_RESTORE_SECONDS:
+            self.shadow = ShadowBattery.from_dict(stored.get("shadow"))
+        elif stored.get("shadow"):
+            self._add_log(dt_util.now(), "info", "schaduwbatterij te oud; opnieuw gestart bij de echte stand")
 
         self._unsubs.append(
             async_track_time_interval(self.hass, self._async_fast_tick, timedelta(seconds=FAST_LOOP_SECONDS))
@@ -199,6 +220,10 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             "baseline_today": self._baseline_today,
             "saving_total": self._saving_total,
             "saving_since": self._saving_since.isoformat() if self._saving_since else None,
+            "shadow": self.shadow.to_dict(),
+            "shadow_cost_today": self._shadow_cost_today,
+            "shadow_saving_total": self._shadow_saving_total,
+            "saved_at": dt_util.now().isoformat(),
         }
 
     # ------------------------------------------------------------- read state
@@ -354,6 +379,10 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                     load_kwh=self.profile.kwh_between(start, end),
                 )
             )
+        if SHADOW_MODE:
+            # Plannen vanaf de stand die HEMS' eigen voorstellen zouden opleveren.
+            self.shadow.sync(batteries, now)
+            batteries = self.shadow.apply(batteries)
         soc_now = sum(b.soc_kwh for b in batteries if b.soc_pct is not None)
         priorities = Priorities(
             solar_first_eur_per_kwh=float(self._conf(CONF_SOLAR_FIRST_CT)) / 100.0,
@@ -396,7 +425,17 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         if p1 is not None:
             house = p1 + (pv or 0.0) + battery_total
 
-        self._learn(now, house, p1, battery_total)
+        dt = (now - self._last_tick).total_seconds() if self._last_tick else 0.0
+        if not 0 < dt <= 60:
+            dt = 0.0
+        prev = self._prev_result
+        if SHADOW_MODE:
+            self.shadow.sync(batteries, now)
+            if prev is not None:
+                # Het vorige voorstel gold tot nu: laat het op de schaduwstand inwerken.
+                self.shadow.integrate(prev.per_battery_w, dt, batteries)
+        self._learn(now, house, p1, battery_total, prev.total_w if SHADOW_MODE and prev else None)
+        control_batteries = self.shadow.apply(batteries) if SHADOW_MODE else batteries
 
         step = self._plan.step_at(now) if self._plan else None
         target = (
@@ -410,8 +449,9 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             if step
             else None
         )
-        result = control_step(target, p1, batteries, self._previous_total, self.settings)
+        result = control_step(target, p1, control_batteries, self._previous_total, self.settings)
         self._previous_total = result.total_w if result.mode != MODE_SAFETY else None
+        self._prev_result = result
 
         hbc_state = self._state(HBC_STRATEGY_ENTITY)
         hbc = hbc_state.state if hbc_state else None
@@ -443,10 +483,25 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         data.profile_filled_bins = self.profile.filled_bins
         data.hbc_strategy = hbc
         data.decision_log = list(self._log)
+        data.shadow_soc_kwh = self.shadow.total_kwh if SHADOW_MODE else None
+        data.shadow_cost_today_eur = self._shadow_cost_today
+        data.shadow_saving_total_eur = self._shadow_saving_total
+        data.shadow_since = self.shadow.since
         self.async_set_updated_data(data)
 
-    def _learn(self, now: datetime, house_w: float | None, p1_w: float | None, battery_w: float) -> None:
-        """Huisverbruik per kwartier leren, en netkosten met en zonder batterij optellen."""
+    def _learn(
+        self,
+        now: datetime,
+        house_w: float | None,
+        p1_w: float | None,
+        battery_w: float,
+        shadow_w: float | None = None,
+    ) -> None:
+        """Huisverbruik per kwartier leren, en netkosten met en zonder batterij optellen.
+
+        shadow_w is wat HEMS de batterijen liet doen (vorig voorstel); daarmee
+        worden ook de netkosten berekend die er met HEMS aan het stuur waren geweest.
+        """
         dt = (now - self._last_tick).total_seconds() if self._last_tick else 0.0
         self._last_tick = now
         if dt <= 0 or dt > 60:
@@ -456,6 +511,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             self._cost_day = now.date()
             self._cost_today = 0.0
             self._baseline_today = 0.0
+            self._shadow_cost_today = 0.0
         if p1_w is not None and dt and self._plan:
             step = self._plan.step_at(now)
             if step:
@@ -467,6 +523,11 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                 self._cost_today += actual
                 self._baseline_today += baseline
                 self._saving_total += baseline - actual
+                if shadow_w is not None:
+                    shadow_kwh = (p1_w + battery_w - shadow_w) * dt / 3_600_000.0
+                    shadow = shadow_kwh * (step.buy if shadow_kwh >= 0 else step.sell)
+                    self._shadow_cost_today += shadow
+                    self._shadow_saving_total += baseline - shadow
 
         quarter = now.replace(minute=(now.minute // 15) * 15, second=0, microsecond=0)
         if self._quarter_start is None:

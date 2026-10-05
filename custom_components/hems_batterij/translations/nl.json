@@ -90,6 +90,12 @@
       },
       "terugverdientijd": {
         "name": "Terugverdientijd"
+      },
+      "energie_schaduwbatterij": {
+        "name": "Energie in schaduwbatterij"
+      },
+      "besparing_hems_vandaag": {
+        "name": "Besparing HEMS vandaag (schaduw)"
       }
     },
     "binary_sensor": {

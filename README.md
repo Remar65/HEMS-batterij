@@ -59,6 +59,15 @@ zonder bruikbare batterij wordt niets voorgesteld. Ontbreekt alleen het plan (ge
 dan valt hij terug op gewoon zelfverbruik. Laden wordt teruggeschroefd als de netafname boven
 16 kW (3x25A met marge) zou komen.
 
+**Schaduwbatterij (meekijkmodus).** HBC stuurt de echte batterijen, dus hun laadstand zegt
+niets over wat HEMS gedaan zou hebben. HEMS houdt daarom per batterij een laadstand op papier
+bij die alleen verandert door zijn eigen voorstellen (met het gemeten rendement, binnen de
+min/max-grenzen). Plan en regellus rekenen met die stand; zonder dit bleef HEMS bijvoorbeeld
+'s avonds "verkopen" voorstellen omdat de echte batterij van HBC nog vol was. Met dezelfde
+voorstellen worden de netkosten berekend die er met HEMS aan het stuur waren geweest, zodat de
+besparing van HEMS eerlijk naast die van HBC staat. De schaduw begint bij de echte stand en
+blijft een herstart over; na meer dan 2 uur stilstand begint hij opnieuw bij de echte stand.
+
 **Beslislog.** Elke modus-wissel en elk nieuw plan komt met reden en de HBC-strategie van dat
 moment in het attribuut `beslislog` van de modus-sensor en in het HA-log.
 
@@ -76,6 +85,8 @@ moment in het attribuut `beslislog` van de modus-sensor en in het HA-log.
 | Verwachte besparing plan | t.o.v. geen batterij, over de bekende prijzen |
 | Netkosten vandaag | werkelijke netkosten op basis van P1 × kwartierprijs |
 | Besparing batterijen vandaag | netkosten zonder batterij − met batterij (zoals HBC nu stuurt) |
+| Energie in schaduwbatterij | laadstand als HEMS de batterijen zelf had aangestuurd; attribuut: echte stand |
+| Besparing HEMS vandaag (schaduw) | netkosten zonder batterij − met HEMS; attributen: netkosten met HEMS en met HBC, verschil |
 | Terugverdientijd | aanschafprijs ÷ gemeten besparing per jaar (pas zinvol na een paar weken) |
 | Rendement (gemeten) | gewogen round-trip-rendement en gebruikte slijtage |
 | Minimale spread nu | break-even prijsverschil voor laden uit het net, in ct |

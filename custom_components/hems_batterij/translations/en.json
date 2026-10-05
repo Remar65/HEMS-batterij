@@ -90,6 +90,12 @@
       },
       "terugverdientijd": {
         "name": "Payback time"
+      },
+      "energie_schaduwbatterij": {
+        "name": "Shadow battery energy"
+      },
+      "besparing_hems_vandaag": {
+        "name": "HEMS saving today (shadow)"
       }
     },
     "binary_sensor": {
