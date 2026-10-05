@@ -82,12 +82,17 @@ async def test_coordinator_plans_from_shadow_and_counts_shadow_cost(hass: HomeAs
     start = coordinator.shadow.total_kwh
     assert abs(start - (0.50 + 0.45) * 5.12) < 1e-6
 
-    # HBC laadt de echte batterijen vol; HEMS blijft plannen vanaf zijn eigen stand.
+    # HBC laadt de echte batterijen vol: het getoonde plan rekent met die echte stand,
+    # het schaduwplan blijft bij de stand die HEMS' eigen voorstellen opleveren.
     for prefix in ("marstek_m1", "marstek_m2"):
         hass.states.async_set(f"sensor.{prefix}_battery_state_of_charge", "100")
     await coordinator.async_replan("test")
     assert abs(coordinator.shadow.total_kwh - start) < 0.05
-    assert abs(coordinator._plan.steps[0].soc_start_kwh - start) < 0.05
+    assert abs(coordinator._plan.steps[0].soc_start_kwh - 10.24) < 0.05
+    assert abs(coordinator._shadow_plan.steps[0].soc_start_kwh - start) < 0.05
+    await coordinator._async_fast_tick(dt_util.now())
+    assert coordinator.data.result is not None
+    assert coordinator.data.shadow_result is not None
 
     # Netkosten met HEMS: huis 600 W, HBC levert 500 W, HEMS zou 200 W leveren -> 400 W afname.
     now = dt_util.now()

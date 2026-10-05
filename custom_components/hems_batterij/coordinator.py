@@ -72,6 +72,7 @@ from .planner import (
     BatteryModel,
     Plan,
     PlanSlot,
+    PlanStep,
     Priorities,
     break_even_spread,
     make_plan,
@@ -116,6 +117,19 @@ class HemsData:
     shadow_cost_today_eur: float = 0.0
     shadow_saving_total_eur: float = 0.0
     shadow_since: datetime | None = None
+    shadow_result: ControlResult | None = None
+
+
+def _target(step: PlanStep | None) -> ControlTarget | None:
+    if step is None:
+        return None
+    return ControlTarget(
+        mode=step.mode,
+        fixed_w=step.fixed_w,
+        max_charge_w=step.max_charge_w,
+        max_discharge_w=step.max_discharge_w,
+        reason=step.reason,
+    )
 
 
 def _float_state(state: State | None) -> float | None:
@@ -154,7 +168,9 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         self.shadow = ShadowBattery()
         self._shadow_cost_today = 0.0
         self._shadow_saving_total = 0.0
-        self._prev_result: ControlResult | None = None
+        self._shadow_plan: Plan | None = None
+        self._shadow_result: ControlResult | None = None
+        self._shadow_previous_total: float | None = None
         self.data = HemsData()
 
     # ------------------------------------------------------------------ config
@@ -345,6 +361,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         )
         if model is None or not prices:
             self._plan = None
+            self._shadow_plan = None
             missing = "geen prijzen" if not prices else "geen batterijdata"
             self._add_log(now, MODE_SAFETY, f"geen plan: {missing}")
             return
@@ -379,10 +396,6 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                     load_kwh=self.profile.kwh_between(start, end),
                 )
             )
-        if SHADOW_MODE:
-            # Plannen vanaf de stand die HEMS' eigen voorstellen zouden opleveren.
-            self.shadow.sync(batteries, now)
-            batteries = self.shadow.apply(batteries)
         soc_now = sum(b.soc_kwh for b in batteries if b.soc_pct is not None)
         priorities = Priorities(
             solar_first_eur_per_kwh=float(self._conf(CONF_SOLAR_FIRST_CT)) / 100.0,
@@ -392,6 +405,13 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             make_plan, slots, model, soc_now, now, PLAN_STEP_KWH, priorities
         )
         self._plan = plan
+        if SHADOW_MODE:
+            # Tweede, losse plan vanaf de schaduwstand: alleen voor de besparingsvergelijking.
+            self.shadow.sync(batteries, now)
+            shadow_soc = sum(b.soc_kwh for b in self.shadow.apply(batteries) if b.soc_pct is not None)
+            self._shadow_plan = await self.hass.async_add_executor_job(
+                make_plan, slots, model, shadow_soc, now, PLAN_STEP_KWH, priorities
+            )
         saving = plan.expected_saving_eur(soc_now)
         self.data.expected_saving_eur = saving
         first = plan.steps[0] if plan.steps else None
@@ -428,30 +448,32 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         dt = (now - self._last_tick).total_seconds() if self._last_tick else 0.0
         if not 0 < dt <= 60:
             dt = 0.0
-        prev = self._prev_result
+        prev_shadow = self._shadow_result
         if SHADOW_MODE:
             self.shadow.sync(batteries, now)
-            if prev is not None:
-                # Het vorige voorstel gold tot nu: laat het op de schaduwstand inwerken.
-                self.shadow.integrate(prev.per_battery_w, dt, batteries)
-        self._learn(now, house, p1, battery_total, prev.total_w if SHADOW_MODE and prev else None)
-        control_batteries = self.shadow.apply(batteries) if SHADOW_MODE else batteries
-
-        step = self._plan.step_at(now) if self._plan else None
-        target = (
-            ControlTarget(
-                mode=step.mode,
-                fixed_w=step.fixed_w,
-                max_charge_w=step.max_charge_w,
-                max_discharge_w=step.max_discharge_w,
-                reason=step.reason,
-            )
-            if step
-            else None
+            if prev_shadow is not None:
+                # Het vorige schaduwvoorstel gold tot nu: laat het op de schaduwstand inwerken.
+                self.shadow.integrate(prev_shadow.per_battery_w, dt, batteries)
+        self._learn(
+            now, house, p1, battery_total, prev_shadow.total_w if SHADOW_MODE and prev_shadow else None
         )
-        result = control_step(target, p1, control_batteries, self._previous_total, self.settings)
+
+        # Het getoonde voorstel rekent met de echte stand van de batterijen.
+        step = self._plan.step_at(now) if self._plan else None
+        result = control_step(_target(step), p1, batteries, self._previous_total, self.settings)
         self._previous_total = result.total_w if result.mode != MODE_SAFETY else None
-        self._prev_result = result
+
+        if SHADOW_MODE:
+            shadow_step = self._shadow_plan.step_at(now) if self._shadow_plan else None
+            shadow_result = control_step(
+                _target(shadow_step),
+                p1,
+                self.shadow.apply(batteries),
+                self._shadow_previous_total,
+                self.settings,
+            )
+            self._shadow_previous_total = shadow_result.total_w if shadow_result.mode != MODE_SAFETY else None
+            self._shadow_result = shadow_result
 
         hbc_state = self._state(HBC_STRATEGY_ENTITY)
         hbc = hbc_state.state if hbc_state else None
@@ -484,6 +506,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         data.hbc_strategy = hbc
         data.decision_log = list(self._log)
         data.shadow_soc_kwh = self.shadow.total_kwh if SHADOW_MODE else None
+        data.shadow_result = self._shadow_result
         data.shadow_cost_today_eur = self._shadow_cost_today
         data.shadow_saving_total_eur = self._shadow_saving_total
         data.shadow_since = self.shadow.since
@@ -499,7 +522,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
     ) -> None:
         """Huisverbruik per kwartier leren, en netkosten met en zonder batterij optellen.
 
-        shadow_w is wat HEMS de batterijen liet doen (vorig voorstel); daarmee
+        shadow_w is wat HEMS de schaduwbatterij liet doen (vorig schaduwvoorstel); daarmee
         worden ook de netkosten berekend die er met HEMS aan het stuur waren geweest.
         """
         dt = (now - self._last_tick).total_seconds() if self._last_tick else 0.0

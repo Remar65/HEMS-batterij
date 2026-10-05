@@ -165,6 +165,8 @@ SENSORS: tuple[HemsSensorDescription, ...] = (
         attrs_fn=lambda d: {
             "uitleg": "laadstand als HEMS de batterijen zelf had aangestuurd",
             "echte_stand_kwh": _round(d.soc_total_kwh, 2),
+            "voorstel_w": d.shadow_result.total_w if d.shadow_result else None,
+            "modus": d.shadow_result.mode if d.shadow_result else None,
             "sinds": d.shadow_since.isoformat(timespec="minutes") if d.shadow_since else None,
         },
     ),
