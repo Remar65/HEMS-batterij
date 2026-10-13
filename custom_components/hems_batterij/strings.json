@@ -38,7 +38,9 @@
           "solar_first_ct": "Solar first: weight against exporting solar that could be stored (ct/kWh)",
           "trade_margin_ct": "Trade margin: extra gain required for grid charging or selling (ct/kWh)",
           "investment_eur": "Battery investment (€)",
-          "feed_in_cost_ct": "Feed-in cost after net metering ends (ct/kWh)"
+          "feed_in_cost_ct": "Feed-in cost after net metering ends (ct/kWh)",
+          "pv_source": "Solar forecast source (helios or solcast; solcast is the fallback)",
+          "helios_entities": "Helios forecast sensors (power_now, one per panel field)"
         }
       }
     }

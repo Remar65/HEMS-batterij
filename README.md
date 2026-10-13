@@ -16,7 +16,9 @@ samen. Hij rekent met:
 
 - inkoopprijs per kwartier, en terugleverprijs (tot het einde van de saldering gelijk aan de
   inkoopprijs, daarna de kale prijs; datum en aan/uit instelbaar);
-- Solcast-verwachting (halfuurs, verdeeld over kwartieren);
+- zonverwachting van Helios Forecast (per kwartier, per panelenveld opgeteld); als een van de
+  Helios-velden geen verwachting heeft, valt HEMS terug op Solcast (halfuurs). De gebruikte bron
+  staat in het attribuut `zonbron` van *Verwachte besparing plan* en in het beslislog;
 - verwacht huisverbruik uit een zelflerend profiel per kwartier van de week (begint op 400 W
   en leert vanaf dag één bij);
 - het gemeten round-trip-rendement per batterij (lifetime-sensor, nu ca. 79,5 % en 83 %);
@@ -106,7 +108,8 @@ HACS ondersteunt geen privé-repositories. Er zijn twee manieren:
 
 Daarna: *Instellingen → Apparaten en diensten → Integratie toevoegen → HEMS Batterij*.
 De standaardwaarden zijn al ingevuld voor deze installatie (P1 van HomeWizard,
-APsystems- en Enphase-kWh-meters, Zonneplan, Solcast, `marstek_m1, marstek_m2`).
+APsystems- en Enphase-kWh-meters, Zonneplan, Helios en Solcast, `marstek_m1, marstek_m2`).
+In de opties kies je de zonbron (`helios` of `solcast`) en de Helios-sensoren.
 
 ## Plan van aanpak
 

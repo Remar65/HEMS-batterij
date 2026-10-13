@@ -38,7 +38,9 @@
           "solar_first_ct": "Zon eerst: zwaarte tegen terugleveren van zon die opgeslagen had kunnen worden (ct/kWh)",
           "trade_margin_ct": "Handelsdrempel: extra opbrengst nodig voor laden uit of verkopen aan het net (ct/kWh)",
           "investment_eur": "Aanschafprijs batterijen (€)",
-          "feed_in_cost_ct": "Terugleverkosten na einde saldering (ct/kWh)"
+          "feed_in_cost_ct": "Terugleverkosten na einde saldering (ct/kWh)",
+          "pv_source": "Bron zonverwachting (helios of solcast; solcast is de terugval)",
+          "helios_entities": "Helios-verwachtingssensoren (power_now, één per panelenveld)"
         }
       }
     }

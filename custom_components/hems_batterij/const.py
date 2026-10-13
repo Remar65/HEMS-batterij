@@ -26,6 +26,11 @@ CONF_NETTING_END = "netting_end"
 CONF_NETTING_ACTIVE = "netting_full_value"
 CONF_DEFAULT_LOAD_W = "default_load_w"
 CONF_SOLCAST_FIELD = "solcast_field"
+CONF_PV_SOURCE = "pv_source"
+CONF_HELIOS_ENTITIES = "helios_entities"
+
+PV_SOURCE_HELIOS = "helios"
+PV_SOURCE_SOLCAST = "solcast"
 CONF_SOLAR_FIRST_CT = "solar_first_ct"
 CONF_TRADE_MARGIN_CT = "trade_margin_ct"
 CONF_INVESTMENT_EUR = "investment_eur"
@@ -46,6 +51,13 @@ DEFAULTS = {
     CONF_NETTING_ACTIVE: True,
     CONF_DEFAULT_LOAD_W: 400,
     CONF_SOLCAST_FIELD: "pv_estimate",
+    # Zonverwachting: Helios (per panelenveld, zelflerend) zat 6-13 okt 2026 elke dag
+    # dichter bij de werkelijke opbrengst dan Solcast. Solcast blijft de terugval.
+    CONF_PV_SOURCE: PV_SOURCE_HELIOS,
+    CONF_HELIOS_ENTITIES: [
+        "sensor.helios_apsystems_aiko_power_now",
+        "sensor.helios_enphase_jinko_power_now",
+    ],
     # Rangorde (Marco, 3 okt 2026): zon zelf gebruiken > batterij voor eigen huis > handel.
     CONF_SOLAR_FIRST_CT: 10.0,
     CONF_TRADE_MARGIN_CT: 3.0,

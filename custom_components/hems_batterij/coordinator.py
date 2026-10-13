@@ -33,6 +33,7 @@ from .const import (
     CONF_DEFAULT_EFFICIENCY,
     CONF_DEFAULT_LOAD_W,
     CONF_FEED_IN_COST_CT,
+    CONF_HELIOS_ENTITIES,
     CONF_INVESTMENT_EUR,
     CONF_NETTING_ACTIVE,
     CONF_NETTING_END,
@@ -40,6 +41,7 @@ from .const import (
     CONF_PRICE_SENSOR,
     CONF_PV_INVERTED,
     CONF_PV_POWER,
+    CONF_PV_SOURCE,
     CONF_SOLAR_FIRST_CT,
     CONF_SOLCAST_FIELD,
     CONF_SOLCAST_TODAY,
@@ -52,6 +54,8 @@ from .const import (
     DOMAIN,
     FAST_LOOP_SECONDS,
     PLAN_STEP_KWH,
+    PV_SOURCE_HELIOS,
+    PV_SOURCE_SOLCAST,
     RS485_DISABLED,
     SHADOW_MODE,
     STALE_BATTERY_SECONDS,
@@ -66,7 +70,13 @@ from .controller import (
     ControlTarget,
     control_step,
 )
-from .forecast import LoadProfile, parse_solcast_detailed, pv_kwh_between
+from .forecast import (
+    LoadProfile,
+    PvPeriod,
+    parse_helios_forecast,
+    parse_solcast_detailed,
+    pv_kwh_between,
+)
 from .planner import (
     MODE_SAFETY,
     BatteryModel,
@@ -118,6 +128,7 @@ class HemsData:
     shadow_saving_total_eur: float = 0.0
     shadow_since: datetime | None = None
     shadow_result: ControlResult | None = None
+    pv_source: str | None = None
 
 
 def _target(step: PlanStep | None) -> ControlTarget | None:
@@ -351,6 +362,35 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         return dt_util.start_of_local_day(day)
 
     # ---------------------------------------------------------------- planning
+    def _pv_periods(self, now: datetime) -> tuple[list[PvPeriod], str]:
+        """Zonverwachting uit Helios, of uit Solcast als Helios niet compleet is.
+
+        Helios telt alleen als elk ingesteld veld een verwachting voor de komende
+        tijd heeft; met één veld zou de verwachting maar half zo groot zijn.
+        """
+        field_name = str(self._conf(CONF_SOLCAST_FIELD))
+        reason = ""
+        if self._conf(CONF_PV_SOURCE) == PV_SOURCE_HELIOS:
+            entities = self._conf(CONF_HELIOS_ENTITIES) or []
+            if isinstance(entities, str):
+                entities = [entities]
+            periods: list[PvPeriod] = []
+            missing = []
+            for entity_id in entities:
+                state = self._state(entity_id)
+                found = parse_helios_forecast(state.attributes if state else None, field_name)
+                if not any(p.end > now for p in found):
+                    missing.append(entity_id)
+                periods.extend(found)
+            if entities and not missing:
+                return periods, PV_SOURCE_HELIOS
+            reason = f" (terugval: geen Helios-verwachting van {', '.join(missing) or 'geen sensoren'})"
+        periods = []
+        for key in (CONF_SOLCAST_TODAY, CONF_SOLCAST_TOMORROW):
+            state = self._state(self._conf(key))
+            periods.extend(parse_solcast_detailed(state.attributes if state else None, field_name))
+        return periods, PV_SOURCE_SOLCAST + reason
+
     async def async_replan(self, trigger: str) -> None:
         now = dt_util.now()
         batteries = self._read_batteries(now)
@@ -366,11 +406,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             self._add_log(now, MODE_SAFETY, f"geen plan: {missing}")
             return
 
-        field_name = str(self._conf(CONF_SOLCAST_FIELD))
-        pv_periods = []
-        for key in (CONF_SOLCAST_TODAY, CONF_SOLCAST_TOMORROW):
-            state = self._state(self._conf(key))
-            pv_periods.extend(parse_solcast_detailed(state.attributes if state else None, field_name))
+        pv_periods, self.data.pv_source = self._pv_periods(now)
 
         # Tijdens saldering is terugleveren evenveel waard als afnemen; daarna (of als
         # die optie uit staat, bijvoorbeeld bij een jaaroverschot) de kale prijs.
@@ -419,7 +455,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             now,
             first.mode if first else MODE_SAFETY,
             f"nieuw plan ({trigger}): {len(plan.steps)} kwartieren, verwachte besparing "
-            f"€{saving:.2f}; nu: {first.reason if first else '-'}",
+            f"€{saving:.2f}, zon: {self.data.pv_source}; nu: {first.reason if first else '-'}",
         )
 
     @callback
