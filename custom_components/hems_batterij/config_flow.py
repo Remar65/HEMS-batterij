@@ -14,6 +14,7 @@ from .const import (
     CONF_DEFAULT_EFFICIENCY,
     CONF_DEFAULT_LOAD_W,
     CONF_FEED_IN_COST_CT,
+    CONF_HELIOS_ENTITIES,
     CONF_INVESTMENT_EUR,
     CONF_NETTING_ACTIVE,
     CONF_NETTING_END,
@@ -21,6 +22,7 @@ from .const import (
     CONF_PRICE_SENSOR,
     CONF_PV_INVERTED,
     CONF_PV_POWER,
+    CONF_PV_SOURCE,
     CONF_SOLAR_FIRST_CT,
     CONF_SOLCAST_FIELD,
     CONF_SOLCAST_TODAY,
@@ -31,6 +33,8 @@ from .const import (
     DEFAULTS,
     DOMAIN,
     NAME,
+    PV_SOURCE_HELIOS,
+    PV_SOURCE_SOLCAST,
 )
 
 _SENSOR = selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor"))
@@ -113,6 +117,12 @@ class HemsOptionsFlow(OptionsFlow):
                 vol.Required(CONF_INVESTMENT_EUR, default=current[CONF_INVESTMENT_EUR]): vol.All(
                     vol.Coerce(float), vol.Range(min=0, max=100000)
                 ),
+                vol.Required(CONF_PV_SOURCE, default=current[CONF_PV_SOURCE]): vol.In(
+                    [PV_SOURCE_HELIOS, PV_SOURCE_SOLCAST]
+                ),
+                vol.Required(
+                    CONF_HELIOS_ENTITIES, default=current[CONF_HELIOS_ENTITIES]
+                ): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor", multiple=True)),
                 vol.Required(CONF_SOLCAST_FIELD, default=current[CONF_SOLCAST_FIELD]): vol.In(
                     ["pv_estimate", "pv_estimate10", "pv_estimate90"]
                 ),

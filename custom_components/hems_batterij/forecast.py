@@ -1,4 +1,4 @@
-"""Voorspellingen: zon (Solcast) en huisverbruik (zelflerend profiel).
+"""Voorspellingen: zon (Helios of Solcast) en huisverbruik (zelflerend profiel).
 
 Puur Python (geen Home Assistant-imports), zodat dit los te testen is.
 """
@@ -10,6 +10,10 @@ from datetime import datetime, timedelta
 from typing import Any
 
 SOLCAST_PERIOD = timedelta(minutes=30)
+HELIOS_PERIOD = timedelta(minutes=15)
+
+# Solcast-schatting -> bijbehorend Helios-veld (Helios geeft W per kwartier).
+HELIOS_FIELDS = {"pv_estimate": "watts", "pv_estimate10": "p10", "pv_estimate90": "p90"}
 
 
 @dataclass(frozen=True)
@@ -33,6 +37,33 @@ def parse_solcast_detailed(attributes: dict[str, Any] | None, field: str = "pv_e
         except (KeyError, TypeError, ValueError):
             continue
         periods.append(PvPeriod(start=start, end=start + SOLCAST_PERIOD, kw=max(kw, 0.0)))
+    periods.sort(key=lambda p: p.start)
+    return periods
+
+
+def parse_helios_forecast(attributes: dict[str, Any] | None, field: str = "pv_estimate") -> list[PvPeriod]:
+    """Lees het `forecast`-attribuut van een Helios `..._power_now`-sensor.
+
+    Helios geeft per kwartier `watts` (en `p10`/`p90`, die voor verstreken
+    kwartieren leeg zijn; dan geldt `watts`). `field` is de Solcast-naam van de
+    gekozen schatting, zodat de bestaande optie voor beide bronnen werkt.
+    """
+    if not attributes:
+        return []
+    key = HELIOS_FIELDS.get(field, "watts")
+    periods: list[PvPeriod] = []
+    for item in attributes.get("forecast") or []:
+        try:
+            start = item["datetime"]
+            if not isinstance(start, datetime):
+                start = datetime.fromisoformat(str(start))
+            watts = item.get(key)
+            if watts is None:
+                watts = item.get("watts")
+            kw = float(watts or 0.0) / 1000.0
+        except (KeyError, TypeError, ValueError):
+            continue
+        periods.append(PvPeriod(start=start, end=start + HELIOS_PERIOD, kw=max(kw, 0.0)))
     periods.sort(key=lambda p: p.start)
     return periods
 
