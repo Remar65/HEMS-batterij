@@ -1,4 +1,4 @@
-"""Sensoren van HEMS Batterij (alleen uitlezen, niets aansturen)."""
+"""Sensoren van HEMS Batterij."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from . import HemsConfigEntry
-from .const import DOMAIN, NAME, SHADOW_MODE
+from .const import DOMAIN, NAME
 from .coordinator import HemsCoordinator, HemsData
 from .planner import ALL_MODES
 
@@ -40,7 +40,10 @@ def _mode(d: HemsData) -> str | None:
 
 def _mode_attrs(d: HemsData) -> dict[str, Any]:
     attrs: dict[str, Any] = {
-        "meekijkmodus": SHADOW_MODE,
+        "meekijkmodus": not d.control_active,
+        "gestuurde_batterijen": d.controlled,
+        "stuurfouten": d.control_errors,
+        "vermogen_hbc_batterijen_w": _round(d.other_battery_w),
         "reden": d.result.reason if d.result else None,
         "vangnet_redenen": d.result.safety_reasons if d.result else [],
         "hbc_strategie": d.hbc_strategy,
@@ -60,6 +63,15 @@ def _deviation(d: HemsData) -> float | None:
 
 def _round(value: float | None, digits: int = 0) -> float | None:
     return None if value is None else round(value, digits)
+
+
+def _hems_cost(d: HemsData) -> float:
+    """Netkosten vandaag met HEMS: echt als HEMS stuurt, anders de schaduw."""
+    return d.actual_grid_cost_today_eur if d.control_active else d.shadow_cost_today_eur
+
+
+def _hbc_cost(d: HemsData) -> float:
+    return d.shadow_cost_today_eur if d.control_active else d.actual_grid_cost_today_eur
 
 
 def _payback(d: HemsData) -> tuple[float | None, float | None]:
@@ -164,7 +176,11 @@ SENSORS: tuple[HemsSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         value_fn=lambda d: _round(d.shadow_soc_kwh, 2),
         attrs_fn=lambda d: {
-            "uitleg": "laadstand als HEMS de batterijen zelf had aangestuurd",
+            "uitleg": (
+                "laadstand als HBC de door HEMS gestuurde batterij had aangestuurd"
+                if d.control_active
+                else "laadstand als HEMS de batterijen zelf had aangestuurd"
+            ),
             "echte_stand_kwh": _round(d.soc_total_kwh, 2),
             "voorstel_w": d.shadow_result.total_w if d.shadow_result else None,
             "modus": d.shadow_result.mode if d.shadow_result else None,
@@ -176,16 +192,15 @@ SENSORS: tuple[HemsSensorDescription, ...] = (
         translation_key="besparing_hems_vandaag",
         native_unit_of_measurement="€",
         value_fn=lambda d: (
-            round(d.baseline_cost_today_eur - d.shadow_cost_today_eur, 2)
-            if d.shadow_soc_kwh is not None
-            else None
+            round(d.baseline_cost_today_eur - _hems_cost(d), 2) if d.shadow_soc_kwh is not None else None
         ),
         attrs_fn=lambda d: {
-            "netkosten_met_hems": round(d.shadow_cost_today_eur, 2),
-            "netkosten_met_hbc": round(d.actual_grid_cost_today_eur, 2),
+            "vergelijking": "HEMS echt, HBC op papier" if d.control_active else "HBC echt, HEMS op papier",
+            "netkosten_met_hems": round(_hems_cost(d), 2),
+            "netkosten_met_hbc": round(_hbc_cost(d), 2),
             "netkosten_zonder_batterij": round(d.baseline_cost_today_eur, 2),
-            "hems_beter_dan_hbc": round(d.actual_grid_cost_today_eur - d.shadow_cost_today_eur, 2),
-            "besparing_hems_totaal": round(d.shadow_saving_total_eur, 2),
+            "hems_beter_dan_hbc": round(_hbc_cost(d) - _hems_cost(d), 2),
+            "besparing_hems_totaal": round(d.hems_saving_total_eur, 2),
             "sinds": d.shadow_since.isoformat(timespec="minutes") if d.shadow_since else None,
         },
     ),
@@ -236,7 +251,7 @@ def device_info(coordinator: HemsCoordinator) -> DeviceInfo:
         identifiers={(DOMAIN, coordinator.entry.entry_id)},
         name=NAME,
         manufacturer="Eigen bouw",
-        model="Planner + regellus (meekijkmodus)",
+        model="Planner + regellus",
         entry_type=DeviceEntryType.SERVICE,
     )
 
@@ -287,4 +302,10 @@ class HemsBatterySetpoint(CoordinatorEntity[HemsCoordinator], SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"werkelijk_w": self.coordinator.data.battery_actual_per.get(self._prefix)}
+        data = self.coordinator.data
+        command = data.commands.get(self._prefix)
+        return {
+            "werkelijk_w": data.battery_actual_per.get(self._prefix),
+            "gestuurd_door_hems": self._prefix in data.controlled,
+            "opdracht": f"{command.mode} {command.power_w} W" if command else None,
+        }

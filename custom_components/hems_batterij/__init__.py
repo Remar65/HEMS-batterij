@@ -1,6 +1,8 @@
 """HEMS Batterij: planner en regellus voor de Marstek-thuisbatterijen.
 
-Versie 0.1 kijkt alleen mee naast HomeBatteryControl en stuurt niets aan.
+Standaard kijkt de integratie alleen mee naast HomeBatteryControl. Batterijen die
+in de opties als "door HEMS gestuurd" staan, worden pas aangestuurd als de
+schakelaar "HEMS stuurt" aan staat.
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ from homeassistant.core import HomeAssistant
 
 from .coordinator import HemsCoordinator
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SWITCH]
 
 type HemsConfigEntry = ConfigEntry[HemsCoordinator]
 

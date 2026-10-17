@@ -1,7 +1,6 @@
 """Snelle regellus: van plan + actuele P1-meting naar een vermogen per batterij.
 
-In deze versie wordt het resultaat alleen getoond en gelogd (meekijkmodus);
-er is geen code die iets naar de batterijen stuurt.
+Dit rekent alleen; het sturen zelf gebeurt in actuator.py.
 
 Tekenafspraak overal: batterijvermogen + = ontladen (levert aan huis/net),
 - = laden. P1 + = afname uit het net, - = teruglevering.
@@ -84,6 +83,8 @@ class ControllerSettings:
     single_battery_below_w: float = 800.0  # onder dit vermogen één batterij gebruiken
     max_grid_import_w: float = 16000.0  # 3x25A met marge
     smoothing: float = 0.5  # 0 = direct, 1 = nooit bijsturen
+    other_active_w: float = 50.0  # een niet door HEMS gestuurde batterij telt als actief boven dit
+    other_share: float = 0.5  # deel van de P1-afwijking dat HEMS oppakt als een ander ook regelt
 
 
 def desired_total_w(
@@ -92,8 +93,15 @@ def desired_total_w(
     battery_total_w: float,
     previous_total_w: float | None,
     settings: ControllerSettings,
+    other_battery_w: float = 0.0,
 ) -> float:
-    """Gewenst totaalvermogen van alle batterijen samen."""
+    """Gewenst totaalvermogen van alle door HEMS gestuurde batterijen samen.
+
+    other_battery_w is het vermogen van batterijen die iemand anders regelt (HBC),
+    + = ontladen. Die regelen op dezelfde P1-meting. Om niet tegen elkaar in te
+    werken pakt HEMS dan maar een deel van de afwijking op, en gaat het nooit laden
+    terwijl de ander ontlaadt (of andersom): dat zou alleen rendement kosten.
+    """
     if target.mode == MODE_SAFETY:
         return 0.0
     if target.mode in (MODE_GRID_CHARGE, MODE_SELL) and target.fixed_w is not None:
@@ -104,10 +112,15 @@ def desired_total_w(
         error = p1_w
         if abs(error) < settings.deadband_w:
             error = 0.0
+        other_active = abs(other_battery_w) >= settings.other_active_w
+        if other_active:
+            error *= settings.other_share
         raw = battery_total_w + error
         if previous_total_w is not None:
             raw = previous_total_w + (1.0 - settings.smoothing) * (raw - previous_total_w)
         total = raw
+        if other_active and (total > 0) != (other_battery_w > 0) and total != 0:
+            total = 0.0
     total = min(total, target.max_discharge_w)
     total = max(total, -target.max_charge_w)
     # Niet zoveel laden dat de hoofdzekering in gevaar komt.
@@ -207,8 +220,13 @@ def control_step(
     batteries: list[BatteryState],
     previous_total_w: float | None,
     settings: ControllerSettings,
+    other_battery_w: float = 0.0,
 ) -> ControlResult:
-    """Eén doorloop van de snelle regellus."""
+    """Eén doorloop van de snelle regellus.
+
+    `batteries` zijn de batterijen waarover HEMS beslist; other_battery_w is het
+    vermogen van de overige (door HBC geregelde) batterijen, zie desired_total_w.
+    """
     reasons = safety_reasons(batteries, p1_available=p1_w is not None, plan_available=target is not None)
     usable = [b for b in batteries if b.usable]
     # Zonder P1 of zonder bruikbare batterij valt er niets te regelen.
@@ -240,7 +258,7 @@ def control_step(
         reason=target.reason,
     )
     battery_total = sum(b.ac_power_w or 0.0 for b in batteries)
-    total = desired_total_w(target, p1_w, battery_total, previous_total_w, settings)
+    total = desired_total_w(target, p1_w, battery_total, previous_total_w, settings, other_battery_w)
     per_battery = allocate(total, batteries, settings)
     return ControlResult(
         mode=target.mode,

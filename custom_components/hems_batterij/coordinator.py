@@ -1,14 +1,18 @@
 """Coördinator: leest Home Assistant, maakt het plan en draait de regellus.
 
-MEEKIJKMODUS: deze klasse leest alleen entiteiten en publiceert eigen
-sensoren. Er wordt nergens een service aangeroepen en er wordt niets naar
-de batterijen gestuurd (zie ook tests/test_no_writes.py).
+Standaard kijkt de integratie alleen mee: dan wordt niets naar de batterijen
+gestuurd. Pas als er in de opties batterijen als "door HEMS gestuurd" staan én de
+schakelaar "HEMS stuurt" aan staat, stuurt de regellus die batterijen via
+actuator.py. De overige batterijen blijven bij HBC; hun vermogen telt dan als
+"andere regelaar" mee. De vergelijking draait in die stand om: HEMS echt tegen
+een schaduw-HBC op papier (zie shadow_hbc.py).
 """
 
 from __future__ import annotations
 
+import asyncio
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 import logging
 from typing import Any
@@ -25,11 +29,13 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
+from .actuator import Command, MarstekActuator
 from .const import (
     BATTERY_ALARM_SUFFIXES,
     BATTERY_ENTITY_PATTERNS,
     BATTERY_HEARTBEAT_PATTERNS,
     CONF_BATTERIES,
+    CONF_CONTROLLED,
     CONF_DEFAULT_EFFICIENCY,
     CONF_DEFAULT_LOAD_W,
     CONF_FEED_IN_COST_CT,
@@ -53,11 +59,14 @@ from .const import (
     DEFAULTS,
     DOMAIN,
     FAST_LOOP_SECONDS,
+    HBC_CHARGE_TARGET_SOC_ENTITY,
+    HBC_CUTOFF_PATTERNS,
+    HBC_SELL_TARGET_SOC_ENTITY,
+    HBC_SUB_STRATEGY_ENTITY,
     PLAN_STEP_KWH,
     PV_SOURCE_HELIOS,
     PV_SOURCE_SOLCAST,
     RS485_DISABLED,
-    SHADOW_MODE,
     STALE_BATTERY_SECONDS,
     STALE_P1_SECONDS,
     STORAGE_KEY,
@@ -89,6 +98,7 @@ from .planner import (
 )
 from .prices import parse_zonneplan_forecast, upcoming_slots
 from .shadow import ShadowBattery
+from .shadow_hbc import HbcTargets, hbc_step
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -129,6 +139,12 @@ class HemsData:
     shadow_since: datetime | None = None
     shadow_result: ControlResult | None = None
     pv_source: str | None = None
+    control_active: bool = False
+    controlled: list[str] = field(default_factory=list)
+    commands: dict[str, Command] = field(default_factory=dict)
+    control_errors: list[str] = field(default_factory=list)
+    other_battery_w: float | None = None
+    hems_saving_total_eur: float = 0.0
 
 
 def _target(step: PlanStep | None) -> ControlTarget | None:
@@ -182,6 +198,12 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         self._shadow_plan: Plan | None = None
         self._shadow_result: ControlResult | None = None
         self._shadow_previous_total: float | None = None
+        self._hems_saving_total = 0.0
+        # Schakelaar "HEMS stuurt" (switch.py zet dit; standaard uit).
+        self.control_enabled = False
+        self._control_was_active = False
+        self._actuators: dict[str, MarstekActuator] = {}
+        self._tick_lock = asyncio.Lock()
         self.data = HemsData()
 
     # ------------------------------------------------------------------ config
@@ -194,6 +216,29 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
     def battery_prefixes(self) -> list[str]:
         raw = self._conf(CONF_BATTERIES) or ""
         return [p.strip() for p in str(raw).split(",") if p.strip()]
+
+    @property
+    def controlled_prefixes(self) -> list[str]:
+        """Batterijen die HEMS mag sturen (uit de opties, en alleen bekende batterijen)."""
+        raw = self._conf(CONF_CONTROLLED) or []
+        if isinstance(raw, str):
+            raw = [p.strip() for p in raw.split(",")]
+        wanted = {str(p).strip() for p in raw if str(p).strip()}
+        return [p for p in self.battery_prefixes if p in wanted]
+
+    @property
+    def control_active(self) -> bool:
+        return self.control_enabled and bool(self.controlled_prefixes)
+
+    def _actuator(self, prefix: str) -> MarstekActuator:
+        if prefix not in self._actuators:
+            self._actuators[prefix] = MarstekActuator(self.hass, prefix)
+        return self._actuators[prefix]
+
+    async def async_set_control(self, enabled: bool) -> None:
+        """Schakelaar "HEMS stuurt" aan of uit."""
+        self.control_enabled = enabled
+        await self._async_fast_tick(dt_util.now())
 
     # --------------------------------------------------------------- lifecycle
     async def async_start(self) -> None:
@@ -213,6 +258,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         since = stored.get("saving_since")
         self._saving_since = dt_util.parse_datetime(since) if since else dt_util.now()
         self._shadow_saving_total = float(stored.get("shadow_saving_total", 0.0))
+        self._hems_saving_total = float(stored.get("hems_saving_total", self._shadow_saving_total))
         saved_at = dt_util.parse_datetime(stored.get("saved_at") or "")
         if saved_at and (dt_util.now() - saved_at).total_seconds() <= SHADOW_MAX_RESTORE_SECONDS:
             self.shadow = ShadowBattery.from_dict(stored.get("shadow"))
@@ -237,7 +283,16 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
+        if self._control_was_active:
+            # Bij afsluiten of herladen niets achterlaten dat doorloopt: batterijen stil.
+            await self._async_stop_controlled(dt_util.now(), "HEMS-integratie stopt")
         await self._store.async_save(self._storage_payload())
+
+    async def _async_stop_controlled(self, now: datetime, reason: str) -> None:
+        # Wat HEMS echt heeft aangestuurd, ook als de opties intussen zijn gewijzigd.
+        for prefix in list(self._actuators) or self.controlled_prefixes:
+            await self._actuator(prefix).async_stop(now)
+        self._add_log(now, "info", f"gestuurde batterijen stilgezet: {reason}")
 
     def _storage_payload(self) -> dict[str, Any]:
         return {
@@ -250,6 +305,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             "shadow": self.shadow.to_dict(),
             "shadow_cost_today": self._shadow_cost_today,
             "shadow_saving_total": self._shadow_saving_total,
+            "hems_saving_total": self._hems_saving_total,
             "saved_at": dt_util.now().isoformat(),
         }
 
@@ -329,6 +385,36 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             )
         return batteries
 
+    def _with_hbc_limits(self, batteries: list[BatteryState]) -> list[BatteryState]:
+        """Dezelfde batterijen, maar met de laadgrenzen die HBC ervoor gebruikt (schaduw-HBC)."""
+        result = []
+        for b in batteries:
+            low = _float_state(self._state(HBC_CUTOFF_PATTERNS["soc_min"].format(p=b.name)))
+            high = _float_state(self._state(HBC_CUTOFF_PATTERNS["soc_max"].format(p=b.name)))
+            result.append(
+                replace(
+                    b,
+                    soc_min_pct=low if low is not None and 0 <= low <= 100 else b.soc_min_pct,
+                    soc_max_pct=high if high is not None and 0 <= high <= 100 else b.soc_max_pct,
+                )
+            )
+        return result
+
+    def _hbc_targets(self) -> HbcTargets:
+        charge = _float_state(self._state(HBC_CHARGE_TARGET_SOC_ENTITY))
+        sell = _float_state(self._state(HBC_SELL_TARGET_SOC_ENTITY))
+        return HbcTargets(
+            charge_target_soc=charge if charge is not None else 100.0,
+            sell_target_soc=sell if sell is not None else 0.0,
+        )
+
+    def _planned_batteries(self, batteries: list[BatteryState]) -> list[BatteryState]:
+        """Waarover het plan gaat: bij sturen alleen de gestuurde batterijen, anders alle."""
+        if self.control_active:
+            controlled = set(self.controlled_prefixes)
+            return [b for b in batteries if b.name in controlled]
+        return batteries
+
     def _wear_eur_per_kwh(self) -> float:
         entity_id = self._conf(CONF_WEAR_ENTITY)
         if entity_id:
@@ -393,7 +479,8 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
 
     async def async_replan(self, trigger: str) -> None:
         now = dt_util.now()
-        batteries = self._read_batteries(now)
+        all_batteries = self._read_batteries(now)
+        batteries = self._planned_batteries(all_batteries)
         model = self._battery_model(batteries)
         price_state = self._state(self._conf(CONF_PRICE_SENSOR))
         prices = upcoming_slots(
@@ -441,7 +528,10 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             make_plan, slots, model, soc_now, now, PLAN_STEP_KWH, priorities
         )
         self._plan = plan
-        if SHADOW_MODE:
+        if self.control_active:
+            # Bij echt sturen volgt de schaduw HBC; daar hoort geen tweede HEMS-plan bij.
+            self._shadow_plan = None
+        else:
             # Tweede, losse plan vanaf de schaduwstand: alleen voor de besparingsvergelijking.
             self.shadow.sync(batteries, now)
             shadow_soc = sum(b.soc_kwh for b in self.shadow.apply(batteries) if b.soc_pct is not None)
@@ -472,6 +562,11 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
 
     # ---------------------------------------------------------------- fast loop
     async def _async_fast_tick(self, now: datetime) -> None:
+        # Niet twee regelrondes door elkaar (de schakelaar start er ook een).
+        async with self._tick_lock:
+            await self._async_fast_tick_locked()
+
+    async def _async_fast_tick_locked(self) -> None:
         now = dt_util.now()
         batteries = self._read_batteries(now)
         p1 = self._read_p1(now)
@@ -481,25 +576,70 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         if p1 is not None:
             house = p1 + (pv or 0.0) + battery_total
 
+        active = self.control_active
+        if active != self._control_was_active:
+            await self._async_control_changed(now, active)
+        controlled_names = set(self.controlled_prefixes) if active else set()
+        planned = [b for b in batteries if b.name in controlled_names] if active else batteries
+        others_w = sum(b.ac_power_w or 0.0 for b in batteries if b.name not in controlled_names)
+        planned_w = sum(b.ac_power_w or 0.0 for b in planned)
+        # Schaduw: bij meekijken HEMS op papier voor alle batterijen; bij sturen HBC op papier
+        # voor de gestuurde batterijen, met de grenzen die HBC zelf gebruikt.
+        shadow_basis = self._with_hbc_limits(planned) if active else batteries
+
         dt = (now - self._last_tick).total_seconds() if self._last_tick else 0.0
         if not 0 < dt <= 60:
             dt = 0.0
         prev_shadow = self._shadow_result
-        if SHADOW_MODE:
-            self.shadow.sync(batteries, now)
-            if prev_shadow is not None:
-                # Het vorige schaduwvoorstel gold tot nu: laat het op de schaduwstand inwerken.
-                self.shadow.integrate(prev_shadow.per_battery_w, dt, batteries)
-        self._learn(
-            now, house, p1, battery_total, prev_shadow.total_w if SHADOW_MODE and prev_shadow else None
-        )
+        self.shadow.sync(shadow_basis, now)
+        if prev_shadow is not None:
+            # Het vorige schaduwvoorstel gold tot nu: laat het op de schaduwstand inwerken.
+            self.shadow.integrate(prev_shadow.per_battery_w, dt, shadow_basis)
+        shadow_grid = None
+        if p1 is not None and prev_shadow is not None:
+            # Netmeting als de schaduw het voor het zeggen had gehad.
+            shadow_grid = p1 + planned_w - prev_shadow.total_w
+        self._learn(now, house, p1, battery_total, shadow_grid, hems_is_real=active)
 
-        # Het getoonde voorstel rekent met de echte stand van de batterijen.
         step = self._plan.step_at(now) if self._plan else None
-        result = control_step(_target(step), p1, batteries, self._previous_total, self.settings)
+        result = control_step(
+            _target(step),
+            p1,
+            planned,
+            self._previous_total,
+            self.settings,
+            other_battery_w=others_w if active else 0.0,
+        )
         self._previous_total = result.total_w if result.mode != MODE_SAFETY else None
 
-        if SHADOW_MODE:
+        commands: dict[str, Command] = {}
+        errors: list[str] = []
+        if active:
+            for b in planned:
+                watt = result.per_battery_w.get(b.name, 0.0) if b.usable else 0.0
+                max_w = b.max_discharge_w if watt > 0 else b.max_charge_w
+                actuator = self._actuator(b.name)
+                commands[b.name] = await actuator.async_apply(watt, max_w, now)
+                if actuator.last_error:
+                    errors.append(actuator.last_error)
+
+        if active:
+            sub_state = self._state(HBC_SUB_STRATEGY_ENTITY)
+            sub = sub_state.state if sub_state else None
+            shadow_batteries = self.shadow.apply(shadow_basis)
+            residual = (p1 + planned_w) if p1 is not None else 0.0
+            per = (
+                hbc_step(sub, residual, shadow_batteries, self._hbc_targets(), self.settings)
+                if p1 is not None
+                else {b.name: 0.0 for b in shadow_batteries}
+            )
+            self._shadow_result = ControlResult(
+                mode=f"hbc: {sub or 'onbekend'}",
+                total_w=round(sum(per.values()), 0),
+                per_battery_w=per,
+                reason="schaduw-HBC volgt de actieve HBC-deelstrategie",
+            )
+        else:
             shadow_step = self._shadow_plan.step_at(now) if self._shadow_plan else None
             shadow_result = control_step(
                 _target(shadow_step),
@@ -517,16 +657,16 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             self._add_log(now, result.mode, result.reason, hbc=hbc, total_w=result.total_w)
             self._last_mode = result.mode
 
-        model = self._battery_model(batteries)
+        model = self._battery_model(planned)
         data = self.data
         data.result = result
         data.plan = self._plan
         data.p1_w = p1
         data.pv_w = pv
         data.house_w = house
-        data.battery_actual_w = battery_total if batteries else None
+        data.battery_actual_w = planned_w if planned else None
         data.battery_actual_per = {b.name: b.ac_power_w for b in batteries}
-        data.soc_total_kwh = sum(b.soc_kwh for b in batteries if b.soc_pct is not None)
+        data.soc_total_kwh = sum(b.soc_kwh for b in planned if b.soc_pct is not None)
         data.efficiency = model.roundtrip_efficiency if model else None
         data.wear_eur_per_kwh = model.wear_eur_per_kwh if model else None
         if model and step:
@@ -541,12 +681,34 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         data.profile_filled_bins = self.profile.filled_bins
         data.hbc_strategy = hbc
         data.decision_log = list(self._log)
-        data.shadow_soc_kwh = self.shadow.total_kwh if SHADOW_MODE else None
+        data.shadow_soc_kwh = self.shadow.total_kwh
         data.shadow_result = self._shadow_result
         data.shadow_cost_today_eur = self._shadow_cost_today
         data.shadow_saving_total_eur = self._shadow_saving_total
+        data.hems_saving_total_eur = self._hems_saving_total
         data.shadow_since = self.shadow.since
+        data.control_active = active
+        data.controlled = sorted(controlled_names)
+        data.commands = commands
+        data.control_errors = errors
+        data.other_battery_w = others_w if active else None
         self.async_set_updated_data(data)
+
+    async def _async_control_changed(self, now: datetime, active: bool) -> None:
+        """Overgang tussen meekijken en sturen: schaduw en vergelijking opnieuw beginnen."""
+        self._control_was_active = active
+        if active:
+            self._add_log(now, "info", f"HEMS stuurt nu: {', '.join(self.controlled_prefixes)}")
+        else:
+            await self._async_stop_controlled(now, "schakelaar uit of geen gestuurde batterijen meer")
+            self._actuators.clear()
+        # De schaduw wisselt van betekenis (HEMS op papier <-> HBC op papier).
+        self.shadow = ShadowBattery()
+        self._shadow_result = None
+        self._shadow_previous_total = None
+        self._previous_total = None
+        self._shadow_cost_today = self._cost_today
+        await self.async_replan("sturen aan" if active else "sturen uit")
 
     def _learn(
         self,
@@ -554,12 +716,14 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         house_w: float | None,
         p1_w: float | None,
         battery_w: float,
-        shadow_w: float | None = None,
+        shadow_grid_w: float | None = None,
+        hems_is_real: bool = False,
     ) -> None:
         """Huisverbruik per kwartier leren, en netkosten met en zonder batterij optellen.
 
-        shadow_w is wat HEMS de schaduwbatterij liet doen (vorig schaduwvoorstel); daarmee
-        worden ook de netkosten berekend die er met HEMS aan het stuur waren geweest.
+        shadow_grid_w is de netmeting als de schaduw aan het stuur had gezeten: bij
+        meekijken HEMS op papier, bij sturen HBC op papier. hems_is_real zegt welke van
+        de twee (echt of schaduw) de HEMS-kant van de vergelijking is.
         """
         dt = (now - self._last_tick).total_seconds() if self._last_tick else 0.0
         self._last_tick = now
@@ -582,11 +746,12 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                 self._cost_today += actual
                 self._baseline_today += baseline
                 self._saving_total += baseline - actual
-                if shadow_w is not None:
-                    shadow_kwh = (p1_w + battery_w - shadow_w) * dt / 3_600_000.0
+                if shadow_grid_w is not None:
+                    shadow_kwh = shadow_grid_w * dt / 3_600_000.0
                     shadow = shadow_kwh * (step.buy if shadow_kwh >= 0 else step.sell)
                     self._shadow_cost_today += shadow
                     self._shadow_saving_total += baseline - shadow
+                    self._hems_saving_total += baseline - (actual if hems_is_real else shadow)
 
         quarter = now.replace(minute=(now.minute // 15) * 15, second=0, microsecond=0)
         if self._quarter_start is None:
@@ -608,5 +773,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         entry = {"tijd": now.isoformat(timespec="seconds"), "modus": mode, "reden": reason}
         entry.update({k: v for k, v in extra.items() if v is not None})
         self._log.append(entry)
-        _LOGGER.info("HEMS Batterij (meekijken): %s - %s", mode, reason)
+        _LOGGER.info(
+            "HEMS Batterij (%s): %s - %s", "stuurt" if self._control_was_active else "meekijken", mode, reason
+        )
         self.data.decision_log = list(self._log)

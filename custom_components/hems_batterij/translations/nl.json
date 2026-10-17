@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "HEMS Batterij",
-        "description": "Kies de bronnen. Deze versie kijkt alleen mee en stuurt niets aan de batterijen.",
+        "description": "Kies de bronnen. Er wordt niets aangestuurd totdat je in de opties batterijen kiest en de schakelaar 'HEMS stuurt' aanzet.",
         "data": {
           "p1_power": "P1-vermogen (+ afname, - teruglevering)",
           "pv_power": "PV-vermogen (een of meer sensoren)",
@@ -40,7 +40,8 @@
           "investment_eur": "Aanschafprijs batterijen (€)",
           "feed_in_cost_ct": "Terugleverkosten na einde saldering (ct/kWh)",
           "pv_source": "Bron zonverwachting (helios of solcast; solcast is de terugval)",
-          "helios_entities": "Helios-verwachtingssensoren (power_now, één per panelenveld)"
+          "helios_entities": "Helios-verwachtingssensoren (power_now, één per panelenveld)",
+          "controlled_batteries": "Batterijen die HEMS stuurt (leeg = alleen meekijken; ook de schakelaar 'HEMS stuurt' moet aan)"
         }
       }
     }
@@ -106,6 +107,11 @@
       },
       "vangnet": {
         "name": "Vangnet"
+      }
+    },
+    "switch": {
+      "sturing": {
+        "name": "HEMS stuurt"
       }
     }
   }

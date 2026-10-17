@@ -3,10 +3,31 @@
 Eigen Home Assistant-integratie voor de aansturing van de twee Marstek Venus E-thuisbatterijen
 (M1 = V2, M2 = V3, via Modbus op LilyGo/ESPHome), als opvolger van HomeBatteryControl (HBC).
 
-> **Versie 0.1 kijkt alleen mee.** De integratie leest prijzen, zon, P1 en de batterijen,
-> maakt een plan en rekent uit wat zij zou doen. Er zit geen code in die iets naar de
-> batterijen stuurt; HBC blijft gewoon de baas. Een test (`tests/test_no_writes.py`) en een
-> integratietest die alle service-aanroepen controleert, bewaken dat.
+> **Standaard kijkt HEMS alleen mee.** De integratie leest prijzen, zon, P1 en de batterijen,
+> maakt een plan en rekent uit wat zij zou doen. Sinds v0.3 kan HEMS ook zelf sturen, maar
+> alleen de batterijen die je in de opties aanwijst (*Door HEMS gestuurde batterijen*) en
+> alleen zolang de schakelaar **HEMS stuurt** aan staat. Allebei staan standaard uit. Alleen
+> `actuator.py` roept services aan; `tests/test_no_writes.py` bewaakt dat.
+
+## Sturen (v0.3)
+
+Bedoeld voor: **M2 door HEMS, M1 blijft bij HBC.**
+
+- HEMS zet `select.<batterij>_forcible_charge_discharge` (stop/charge/discharge) en het
+  bijbehorende `number.<batterij>_forcible_charge_power` / `_discharge_power`. Er wordt
+  alleen geschreven als de batterij iets anders doet dan gevraagd.
+- **Twee regelaars op één P1-meter.** Zolang HBC de andere batterij laat werken (> 50 W),
+  pakt HEMS maar de helft van de P1-afwijking op en werkt het nooit tegen de richting van
+  die andere batterij in. Zo gaan de twee niet tegen elkaar op slingeren.
+- **Stilzetten.** Schakelaar uit, integratie herladen of HA afsluiten, batterij in alarm of
+  zonder verse gegevens: de gestuurde batterij gaat naar `stop`.
+- **Vergelijking blijft.** Tijdens het sturen houdt de schaduwbatterij bij wat HBC met
+  dezelfde batterij had gedaan (*schaduw-HBC*): die volgt HBC's actieve deelstrategie
+  (`input_text.house_battery_strategy_active_sub_strategy`) met HBC's eigen laadgrenzen.
+  "Besparing HEMS vandaag" toont dan HEMS echt tegenover HBC op papier.
+- **Overdracht met HBC** (een HA-automatisering, buiten deze integratie): bij aanzetten
+  `input_number.house_battery_count` naar 1 zodat HBC alleen M1 stuurt; bij uitzetten of als
+  HEMS niet meer reageert M2 op `stop` en het aantal terug naar 2.
 
 ## Wat het doet
 
@@ -93,7 +114,8 @@ moment in het attribuut `beslislog` van de modus-sensor en in het HA-log.
 | Terugverdientijd | aanschafprijs ÷ gemeten besparing per jaar (pas zinvol na een paar weken) |
 | Rendement (gemeten) | gewogen round-trip-rendement en gebruikte slijtage |
 | Minimale spread nu | break-even prijsverschil voor laden uit het net, in ct |
-| Meekijkmodus | staat in deze versie altijd aan |
+| Meekijkmodus | aan zolang HEMS niets stuurt |
+| HEMS stuurt (schakelaar) | aan = de gekozen batterijen volgen HEMS; attributen: gestuurde batterijen, actief |
 | Vangnet | aan als er iets ontbreekt of een alarm is; attribuut: redenen |
 
 ## Installeren
@@ -113,9 +135,9 @@ In de opties kies je de zonbron (`helios` of `solcast`) en de Helios-sensoren.
 
 ## Plan van aanpak
 
-1. **v0.1 meekijken** (deze versie): plan en voorstel naast HBC, besparing en afwijking volgen.
+1. **v0.1 meekijken**: plan en voorstel naast HBC, besparing en afwijking volgen.
 2. Vergelijken over een paar weken: werkelijke netkosten vs. wat het plan verwachtte.
-3. **Overnemen per batterij, alleen na akkoord**: eerst M2, HBC blijft terugval voor M1.
+3. **Overnemen per batterij, alleen na akkoord** (v0.3): eerst M2, HBC blijft terugval voor M1.
 4. Saldering per 1-1-2027: terugleverprijs daarna instellen op wat Zonneplan dan vergoedt.
 
 ## Ontwikkelen

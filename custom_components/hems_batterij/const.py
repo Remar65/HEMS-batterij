@@ -5,9 +5,9 @@ from __future__ import annotations
 DOMAIN = "hems_batterij"
 NAME = "HEMS Batterij"
 
-# Deze versie kijkt alleen mee. Er bestaat in deze integratie geen code die
-# batterij-entiteiten aanstuurt; deze vlag staat er om dat ook in de UI te tonen.
-SHADOW_MODE = True
+# Standaard kijkt de integratie alleen mee. Aansturen gebeurt pas als in de opties
+# batterijen zijn aangewezen ("controlled_batteries") én de schakelaar "HEMS stuurt"
+# aan staat. Alleen actuator.py roept services aan (zie tests/test_no_writes.py).
 
 # Configuratie (config flow)
 CONF_P1_POWER = "p1_power"
@@ -28,6 +28,7 @@ CONF_DEFAULT_LOAD_W = "default_load_w"
 CONF_SOLCAST_FIELD = "solcast_field"
 CONF_PV_SOURCE = "pv_source"
 CONF_HELIOS_ENTITIES = "helios_entities"
+CONF_CONTROLLED = "controlled_batteries"
 
 PV_SOURCE_HELIOS = "helios"
 PV_SOURCE_SOLCAST = "solcast"
@@ -65,6 +66,9 @@ DEFAULTS = {
     CONF_INVESTMENT_EUR: 2625.0,
     # Terugleverkosten per kWh na de saldering (nu nog onbekend, dus 0).
     CONF_FEED_IN_COST_CT: 0.0,
+    # Batterijen die HEMS zelf aanstuurt (leeg = alleen meekijken). Marco, 17 okt 2026:
+    # eerst alleen de M2; de M1 blijft bij HBC.
+    CONF_CONTROLLED: [],
 }
 
 # Entiteiten per Marstek (ESPHome LilyGo), afgeleid van het voorvoegsel, bijv. "marstek_m1".
@@ -82,6 +86,29 @@ BATTERY_ENTITY_PATTERNS = {
     "rs485_mode": "select.{p}_rs485_control_mode",
 }
 RS485_DISABLED = "disable"
+
+# Aansturing via Modbus (ESPHome LilyGo): richting + vermogen.
+CONTROL_ENTITY_PATTERNS = {
+    "mode": "select.{p}_forcible_charge_discharge",  # stop / charge / discharge
+    "charge_w": "number.{p}_forcible_charge_power",
+    "discharge_w": "number.{p}_forcible_discharge_power",
+}
+CONTROL_STOP = "stop"
+CONTROL_CHARGE = "charge"
+CONTROL_DISCHARGE = "discharge"
+CONTROL_MIN_W = 50.0  # kleiner vermogen: batterij stilzetten
+CONTROL_WRITE_DELTA_W = 50.0  # vermogen pas opnieuw sturen bij zoveel verschil
+CONTROL_RESEND_SECONDS = 15.0  # zelfde waarde niet vaker opnieuw sturen dan dit
+
+# HBC: de actieve deelstrategie en de grenzen die HBC per batterij gebruikt. Daarmee
+# speelt de schaduw-HBC na wat HBC met een door HEMS gestuurde batterij had gedaan.
+HBC_SUB_STRATEGY_ENTITY = "input_text.house_battery_strategy_active_sub_strategy"
+HBC_CHARGE_TARGET_SOC_ENTITY = "input_number.house_battery_strategy_charge_target_soc"
+HBC_SELL_TARGET_SOC_ENTITY = "input_number.house_battery_strategy_sell_target_soc"
+HBC_CUTOFF_PATTERNS = {
+    "soc_min": "input_number.{p}_discharging_cutoff_capacity",
+    "soc_max": "input_number.{p}_charging_cutoff_capacity",
+}
 
 # ESPHome stuurt alleen wijzigingen door: een stilstaande batterij meldt geen nieuw
 # AC-vermogen. Daarom telt een batterij als actueel zolang één van deze sensoren recent
