@@ -11,6 +11,7 @@ import voluptuous as vol
 
 from .const import (
     CONF_BATTERIES,
+    CONF_CONTROLLED,
     CONF_DEFAULT_EFFICIENCY,
     CONF_DEFAULT_LOAD_W,
     CONF_FEED_IN_COST_CT,
@@ -91,8 +92,17 @@ class HemsOptionsFlow(OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(data=user_input)
         current = {**DEFAULTS, **self.config_entry.options}
+        batteries = [
+            p.strip()
+            for p in str(self.config_entry.data.get(CONF_BATTERIES, DEFAULTS[CONF_BATTERIES])).split(",")
+            if p.strip()
+        ]
+        controlled = [p for p in (current[CONF_CONTROLLED] or []) if p in batteries]
         schema = vol.Schema(
             {
+                vol.Optional(CONF_CONTROLLED, default=controlled): selector.SelectSelector(
+                    selector.SelectSelectorConfig(options=batteries, multiple=True)
+                ),
                 vol.Optional(CONF_WEAR_ENTITY, default=current[CONF_WEAR_ENTITY]): str,
                 vol.Required(CONF_WEAR_CT, default=current[CONF_WEAR_CT]): vol.All(
                     vol.Coerce(float), vol.Range(min=0, max=50)

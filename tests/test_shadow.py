@@ -98,7 +98,7 @@ async def test_coordinator_plans_from_shadow_and_counts_shadow_cost(hass: HomeAs
     now = dt_util.now()
     coordinator._last_tick = now
     before = coordinator._shadow_cost_today
-    coordinator._learn(now + timedelta(seconds=36), 600, 100, 500, 200)
+    coordinator._learn(now + timedelta(seconds=36), 600, 100, 500, shadow_grid_w=100 + 500 - 200)
     step = coordinator._plan.step_at(now + timedelta(seconds=36))
     assert abs((coordinator._shadow_cost_today - before) - 400 * 36 / 3_600_000 * step.buy) < 1e-9
     assert await hass.config_entries.async_unload(entry.entry_id)

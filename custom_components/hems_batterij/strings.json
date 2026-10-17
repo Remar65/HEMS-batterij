@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "HEMS Batterij",
-        "description": "Pick the sources. This version only observes and never controls the batteries.",
+        "description": "Pick the sources. Nothing is controlled until you select batteries in the options and turn on the 'HEMS controls' switch.",
         "data": {
           "p1_power": "P1 power (+ import, - export)",
           "pv_power": "PV power (one or more sensors)",
@@ -40,7 +40,8 @@
           "investment_eur": "Battery investment (€)",
           "feed_in_cost_ct": "Feed-in cost after net metering ends (ct/kWh)",
           "pv_source": "Solar forecast source (helios or solcast; solcast is the fallback)",
-          "helios_entities": "Helios forecast sensors (power_now, one per panel field)"
+          "helios_entities": "Helios forecast sensors (power_now, one per panel field)",
+          "controlled_batteries": "Batteries HEMS controls (empty = observe only; also needs the 'HEMS controls' switch)"
         }
       }
     }
@@ -106,6 +107,11 @@
       },
       "vangnet": {
         "name": "Safety net"
+      }
+    },
+    "switch": {
+      "sturing": {
+        "name": "HEMS controls"
       }
     }
   }

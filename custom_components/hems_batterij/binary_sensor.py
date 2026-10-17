@@ -10,7 +10,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import HemsConfigEntry
-from .const import SHADOW_MODE
 from .coordinator import HemsCoordinator
 from .sensor import device_info
 
@@ -33,14 +32,14 @@ class _Base(CoordinatorEntity[HemsCoordinator], BinarySensorEntity):
 
 
 class HemsShadowMode(_Base):
-    """Staat aan zolang de integratie alleen meekijkt (in deze versie altijd)."""
+    """Staat aan zolang de integratie alleen meekijkt (niets stuurt)."""
 
     def __init__(self, coordinator: HemsCoordinator) -> None:
         super().__init__(coordinator, "meekijkmodus")
 
     @property
     def is_on(self) -> bool:
-        return SHADOW_MODE
+        return not self.coordinator.data.control_active
 
 
 class HemsSafety(_Base):
