@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .controller import BatteryState, ControllerSettings, allocate
+from .planner import MODE_GRID_CHARGE, MODE_SELL
 
 SUB_SELF_CONSUMPTION = "Self-consumption"
 SUB_CHARGE_PV = "Charge PV"
@@ -25,6 +26,13 @@ SUB_CHARGE = "Charge"
 SUB_SELL = "Sell"
 SUB_ZERO_IMPORT = "Zero import"
 SUB_IDLE = ("Full stop", "Standby / peak shave", "Standby")
+
+# Deelstrategieën waarin HBC netafname dekt uit zijn eigen batterij, of een overschot
+# erin opslaat. Laadt HEMS dan uit het net (of verkoopt het), dan ontlaadt (of laadt)
+# HBC zijn batterij om dat op P1 weg te werken: energie gaat van de ene batterij naar
+# de andere en kost alleen rendement.
+_COVERS_IMPORT = (SUB_SELF_CONSUMPTION, SUB_ZERO_IMPORT, SUB_SELL)
+_ABSORBS_EXPORT = (SUB_SELF_CONSUMPTION, SUB_CHARGE_PV, SUB_CHARGE)
 
 
 @dataclass
@@ -75,6 +83,16 @@ def hbc_step(
 ) -> dict[str, float]:
     """Vermogen per schaduwbatterij onder HBC."""
     return allocate(hbc_total_w(sub_strategy, residual_w, batteries, targets), batteries, settings)
+
+
+def hbc_counteracts(mode: str, sub_strategy: str | None, others: list[BatteryState]) -> bool:
+    """Werkt HBC met de andere batterij(en) een vaste HEMS-opdracht op P1 tegen?"""
+    sub = (sub_strategy or SUB_SELF_CONSUMPTION).strip()
+    if mode == MODE_GRID_CHARGE:
+        return sub in _COVERS_IMPORT and any(b.usable and b.can_discharge() for b in others)
+    if mode == MODE_SELL:
+        return sub in _ABSORBS_EXPORT and any(b.usable and b.can_charge() for b in others)
+    return False
 
 
 def _clamp(watt: float, max_charge_w: float, max_discharge_w: float) -> float:
