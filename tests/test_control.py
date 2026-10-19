@@ -1,14 +1,23 @@
 """HEMS stuurt: actuator, samenwerking met HBC op één P1-meter, schaduw-HBC en de schakelaar."""
 
+from datetime import timedelta
+
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_mock_service
 
 from custom_components.hems_batterij.actuator import Command, command_for, writes_needed
 from custom_components.hems_batterij.const import DOMAIN
 from custom_components.hems_batterij.controller import ControllerSettings, ControlTarget, control_step
-from custom_components.hems_batterij.planner import MODE_SELF_CONSUMPTION
-from custom_components.hems_batterij.shadow_hbc import HbcTargets, hbc_total_w
+from custom_components.hems_batterij.planner import (
+    MODE_GRID_CHARGE,
+    MODE_SELF_CONSUMPTION,
+    MODE_SELL,
+    Plan,
+    PlanStep,
+)
+from custom_components.hems_batterij.shadow_hbc import HbcTargets, hbc_counteracts, hbc_total_w
 
 from .test_controller import bat
 from .test_init import _set_states
@@ -132,4 +141,71 @@ async def test_unusable_battery_is_stopped(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
     await entry.runtime_data.async_set_control(True)
     assert [c.data["option"] for c in selects] == ["stop"]
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+def test_hbc_counteracts_fixed_orders() -> None:
+    m1 = [bat("m1", 50)]
+    # HEMS laadt uit het net terwijl HBC zelfverbruik doet: HBC ontlaadt M1 ertegenin.
+    assert hbc_counteracts(MODE_GRID_CHARGE, "Self-consumption", m1)
+    assert hbc_counteracts(MODE_GRID_CHARGE, None, m1)
+    # HBC laadt zelf ook, of M1 is leeg: geen probleem.
+    assert not hbc_counteracts(MODE_GRID_CHARGE, "Charge", m1)
+    assert not hbc_counteracts(MODE_GRID_CHARGE, "Self-consumption", [bat("m1", 10)])
+    # Verkopen terwijl HBC overschot in M1 opslaat: tegenwerken; bij nul-import niet.
+    assert hbc_counteracts(MODE_SELL, "Self-consumption", m1)
+    assert hbc_counteracts(MODE_SELL, "Charge PV", m1)
+    assert not hbc_counteracts(MODE_SELL, "Zero import", m1)
+    assert not hbc_counteracts(MODE_SELL, "Self-consumption", [bat("m1", 100)])
+    assert not hbc_counteracts(MODE_SELF_CONSUMPTION, "Self-consumption", m1)
+
+
+async def test_no_grid_charge_while_hbc_covers_it_from_m1(hass: HomeAssistant) -> None:
+    """19 okt 16:00: plan net_laden voor M2, HBC op zelfverbruik ontlaadde M1 ertegenin."""
+    _set_states(hass)
+    for prefix in ("marstek_m1", "marstek_m2"):
+        hass.states.async_set(f"select.{prefix}_forcible_charge_discharge", "stop")
+        hass.states.async_set(f"number.{prefix}_forcible_charge_power", "0")
+        hass.states.async_set(f"number.{prefix}_forcible_discharge_power", "0")
+    hass.states.async_set("input_text.house_battery_strategy_active_sub_strategy", "Self-consumption")
+    async_mock_service(hass, "select", "select_option")
+    async_mock_service(hass, "number", "set_value")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"batteries": "marstek_m1, marstek_m2"},
+        options={"controlled_batteries": ["marstek_m2"]},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data
+    await coordinator.async_set_control(True)
+
+    step = PlanStep(
+        start=dt_util.now() - timedelta(minutes=1),
+        end=dt_util.now() + timedelta(minutes=14),
+        buy=0.345,
+        sell=0.345,
+        pv_kwh=0.0,
+        load_kwh=0.1,
+        soc_start_kwh=1.0,
+        soc_end_kwh=1.2,
+        battery_ac_kwh=-0.23,
+        grid_kwh=0.05,
+        cost_eur=0.0,
+        baseline_cost_eur=0.0,
+        mode=MODE_GRID_CHARGE,
+        fixed_w=-900.0,
+        max_charge_w=900.0,
+    )
+
+    coordinator._plan = Plan(created=dt_util.now(), steps=[step])
+    await coordinator._async_fast_tick(None)
+    assert coordinator.data.commands["marstek_m2"].mode != "charge"
+    assert coordinator.data.result.reason.startswith("niet uit het net laden")
+
+    # HBC laadt M1 zelf ook goedkoop: dan mag HEMS M2 wel uit het net laden.
+    hass.states.async_set("input_text.house_battery_strategy_active_sub_strategy", "Charge")
+    await coordinator._async_fast_tick(None)
+    assert coordinator.data.commands["marstek_m2"].mode == "charge"
     assert await hass.config_entries.async_unload(entry.entry_id)

@@ -19,6 +19,10 @@ Bedoeld voor: **M2 door HEMS, M1 blijft bij HBC.**
 - **Twee regelaars op één P1-meter.** Zolang HBC de andere batterij laat werken (> 50 W),
   pakt HEMS maar de helft van de P1-afwijking op en werkt het nooit tegen de richting van
   die andere batterij in. Zo gaan de twee niet tegen elkaar op slingeren.
+  Vaste opdrachten uit het plan (uit het net laden, verkopen) slaat HEMS over zolang
+  HBC's actieve deelstrategie die met de andere batterij zou wegregelen, bijvoorbeeld
+  M2 uit het net laden terwijl HBC op zelfverbruik M1 ontlaadt. HEMS doet dan alleen
+  zelfverbruik binnen de grenzen van dat kwartier.
 - **Stilzetten.** Schakelaar uit, integratie herladen of HA afsluiten, batterij in alarm of
   zonder verse gegevens: de gestuurde batterij gaat naar `stop`.
 - **Vergelijking blijft.** Tijdens het sturen houdt de schaduwbatterij bij wat HBC met

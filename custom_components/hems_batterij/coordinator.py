@@ -87,7 +87,9 @@ from .forecast import (
     pv_kwh_between,
 )
 from .planner import (
+    MODE_GRID_CHARGE,
     MODE_SAFETY,
+    MODE_SELF_CONSUMPTION,
     BatteryModel,
     Plan,
     PlanSlot,
@@ -98,7 +100,7 @@ from .planner import (
 )
 from .prices import parse_zonneplan_forecast, upcoming_slots
 from .shadow import ShadowBattery
-from .shadow_hbc import HbcTargets, hbc_step
+from .shadow_hbc import HbcTargets, hbc_counteracts, hbc_step
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -602,8 +604,25 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         self._learn(now, house, p1, battery_total, shadow_grid, hems_is_real=active)
 
         step = self._plan.step_at(now) if self._plan else None
+        target = _target(step)
+        sub_state = self._state(HBC_SUB_STRATEGY_ENTITY)
+        sub = sub_state.state if sub_state else None
+        if active and target is not None and target.fixed_w is not None:
+            others = [b for b in batteries if b.name not in controlled_names]
+            if hbc_counteracts(target.mode, sub, others):
+                # Bijv. HEMS laadt M2 uit het net terwijl HBC M1 op zelfverbruik heeft:
+                # HBC zou M1 ontladen om die afname te dekken. Dan alleen zelfverbruik
+                # binnen de grenzen van het plan (bij net_laden: niet ontladen).
+                verb = "uit het net laden" if target.mode == MODE_GRID_CHARGE else "verkopen"
+                target = replace(
+                    target,
+                    mode=MODE_SELF_CONSUMPTION,
+                    fixed_w=None,
+                    reason=f"niet {verb}: HBC ({sub or 'onbekend'}) zou de andere batterij "
+                    f"ertegenin laten werken; {target.reason}",
+                )
         result = control_step(
-            _target(step),
+            target,
             p1,
             planned,
             self._previous_total,
@@ -624,8 +643,6 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                     errors.append(actuator.last_error)
 
         if active:
-            sub_state = self._state(HBC_SUB_STRATEGY_ENTITY)
-            sub = sub_state.state if sub_state else None
             shadow_batteries = self.shadow.apply(shadow_basis)
             residual = (p1 + planned_w) if p1 is not None else 0.0
             per = (
