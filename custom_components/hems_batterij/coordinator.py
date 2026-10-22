@@ -98,7 +98,7 @@ from .planner import (
     break_even_spread,
     make_plan,
 )
-from .prices import parse_zonneplan_forecast, upcoming_slots
+from .prices import PriceSlot, parse_zonneplan_forecast, upcoming_slots
 from .shadow import ShadowBattery
 from .shadow_hbc import HbcTargets, hbc_counteracts, hbc_step
 
@@ -141,6 +141,7 @@ class HemsData:
     shadow_since: datetime | None = None
     shadow_result: ControlResult | None = None
     pv_source: str | None = None
+    price_source: str | None = None
     control_active: bool = False
     controlled: list[str] = field(default_factory=list)
     commands: dict[str, Command] = field(default_factory=dict)
@@ -177,6 +178,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=None, config_entry=entry)
         self.entry = entry
         self.settings = ControllerSettings()
+        self._last_prices: list[PriceSlot] = []
         self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}.{entry.entry_id}")
         self._unsubs: list[CALLBACK_TYPE] = []
         self._log: deque[dict[str, Any]] = deque(maxlen=DECISION_LOG_SIZE)
@@ -266,6 +268,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             self.shadow = ShadowBattery.from_dict(stored.get("shadow"))
         elif stored.get("shadow"):
             self._add_log(dt_util.now(), "info", "schaduwbatterij te oud; opnieuw gestart bij de echte stand")
+        self._last_prices = _prices_from_store(stored.get("prices"))
 
         self._unsubs.append(
             async_track_time_interval(self.hass, self._async_fast_tick, timedelta(seconds=FAST_LOOP_SECONDS))
@@ -309,6 +312,9 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             "shadow_saving_total": self._shadow_saving_total,
             "hems_saving_total": self._hems_saving_total,
             "saved_at": dt_util.now().isoformat(),
+            "prices": [
+                [p.start.isoformat(), p.end.isoformat(), p.buy, p.buy_ex_tax] for p in self._last_prices
+            ],
         }
 
     # ------------------------------------------------------------- read state
@@ -485,9 +491,16 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         batteries = self._planned_batteries(all_batteries)
         model = self._battery_model(batteries)
         price_state = self._state(self._conf(CONF_PRICE_SENSOR))
-        prices = upcoming_slots(
-            parse_zonneplan_forecast(price_state.attributes if price_state else None), now
-        )
+        fresh = parse_zonneplan_forecast(price_state.attributes if price_state else None)
+        if fresh:
+            self._last_prices = fresh
+            self.data.price_source = "zonneplan"
+        else:
+            # Zonder internet zet Zonneplan de sensor op 'niet beschikbaar', terwijl de
+            # prijzen tot en met morgen vaak al binnen waren: blijf daarmee plannen.
+            fresh = self._last_prices
+            self.data.price_source = "laatst bekend (Zonneplan niet bereikbaar)" if fresh else None
+        prices = upcoming_slots(fresh, now)
         if model is None or not prices:
             self._plan = None
             self._shadow_plan = None
@@ -794,3 +807,16 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             "HEMS Batterij (%s): %s - %s", "stuurt" if self._control_was_active else "meekijken", mode, reason
         )
         self.data.decision_log = list(self._log)
+
+
+def _prices_from_store(raw: Any) -> list[PriceSlot]:
+    """Bewaarde prijzen terug; iets onleesbaars betekent gewoon geen reserve."""
+    slots: list[PriceSlot] = []
+    for item in raw or []:
+        try:
+            start, end = dt_util.parse_datetime(item[0]), dt_util.parse_datetime(item[1])
+            if start and end:
+                slots.append(PriceSlot(start, end, float(item[2]), float(item[3])))
+        except (TypeError, ValueError, IndexError):
+            continue
+    return slots

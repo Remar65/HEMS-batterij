@@ -8,8 +8,9 @@ from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_mock_service
 
 from custom_components.hems_batterij.actuator import Command, command_for, writes_needed
-from custom_components.hems_batterij.const import DOMAIN
+from custom_components.hems_batterij.const import DEFAULTS, DOMAIN
 from custom_components.hems_batterij.controller import ControllerSettings, ControlTarget, control_step
+from custom_components.hems_batterij.coordinator import _prices_from_store
 from custom_components.hems_batterij.planner import (
     MODE_GRID_CHARGE,
     MODE_SELF_CONSUMPTION,
@@ -208,4 +209,27 @@ async def test_no_grid_charge_while_hbc_covers_it_from_m1(hass: HomeAssistant) -
     hass.states.async_set("input_text.house_battery_strategy_active_sub_strategy", "Charge")
     await coordinator._async_fast_tick(None)
     assert coordinator.data.commands["marstek_m2"].mode == "charge"
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_keeps_planning_on_last_known_prices_when_zonneplan_drops(hass: HomeAssistant) -> None:
+    _set_states(hass)
+    entry = MockConfigEntry(domain=DOMAIN, data={"batteries": "marstek_m1, marstek_m2"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data
+    assert coordinator._plan is not None
+    assert coordinator.data.price_source == "zonneplan"
+
+    # Internet weg: Zonneplan wordt 'unavailable' zonder forecast, het plan blijft.
+    hass.states.async_set(DEFAULTS["price_sensor"], "unavailable", {})
+    await coordinator.async_replan("test")
+    assert coordinator._plan is not None
+    assert coordinator.data.price_source.startswith("laatst bekend")
+
+    # Ook na een herstart tijdens de storing: de prijzen komen uit de opslag.
+    payload = coordinator._storage_payload()
+    assert _prices_from_store(payload["prices"]) == coordinator._last_prices
+    assert _prices_from_store([["kapot"]]) == []
     assert await hass.config_entries.async_unload(entry.entry_id)
