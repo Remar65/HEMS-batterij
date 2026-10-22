@@ -82,8 +82,10 @@ energie of ruimte, binnen de limieten per batterij.
 
 **Vangnetten.** P1 ouder dan 30 s, batterijdata ouder dan 120 s, BMS-beveiliging,
 communicatiefout, over/onderspanning, te warm/koud, RS485-besturing uit: die batterij doet niet mee, en zonder P1 of
-zonder bruikbare batterij wordt niets voorgesteld. Ontbreekt alleen het plan (geen prijzen),
-dan valt hij terug op gewoon zelfverbruik. Laden wordt teruggeschroefd als de netafname boven
+zonder bruikbare batterij wordt niets voorgesteld. Is Zonneplan niet bereikbaar (bijvoorbeeld
+zonder internet), dan plant hij door met de laatst bekende prijzen, ook na een herstart; attribuut
+`prijsbron` van Verwachte besparing laat dat zien. Zijn er helemaal geen prijzen meer, dan valt hij
+terug op gewoon zelfverbruik. Laden wordt teruggeschroefd als de netafname boven
 16 kW (3x25A met marge) zou komen.
 
 **Schaduwbatterij (meekijkmodus).** Het voorstel rekent met de echte stand van de batterijen
