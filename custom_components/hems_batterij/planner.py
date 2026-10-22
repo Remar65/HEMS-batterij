@@ -46,6 +46,9 @@ ALL_MODES = [MODE_SELF_CONSUMPTION, MODE_GRID_CHARGE, MODE_SELL, MODE_HOLD, MODE
 _TIE_BREAK_EUR_PER_KWH = 0.0001
 # Onder deze hoeveelheid (kWh per kwartier) telt iets als "niets".
 _TOLERANCE_KWH = 0.03
+# Netladen of verkopen kleiner dan dit per kwartier levert niets op (afrondingsrest van de
+# planner) en ziet er alleen onlogisch uit; dan geldt gewoon vasthouden of zelfverbruik.
+_MIN_GRID_ORDER_KWH = 0.1
 # Vanaf zoveel verwacht zon-overschot (kWh, rest van de dag) telt verkopen als ruimte maken.
 _SOLAR_AHEAD_KWH = 0.5
 
@@ -319,12 +322,12 @@ def _classify(step: PlanStep, slot: PlanSlot, battery: BatteryModel) -> None:
     full_charge_w = battery.max_charge_kw * 1000.0
     full_discharge_w = battery.max_discharge_kw * 1000.0
 
-    if ac < -_TOLERANCE_KWH and -ac > max(surplus, 0.0) + _TOLERANCE_KWH:
+    if ac < -_TOLERANCE_KWH and -ac > max(surplus, 0.0) + _MIN_GRID_ORDER_KWH:
         step.mode = MODE_GRID_CHARGE
         step.fixed_w = ac / hours * 1000.0  # negatief = laden
         step.max_charge_w = -step.fixed_w
         return
-    if ac > _TOLERANCE_KWH and ac > max(-surplus, 0.0) + _TOLERANCE_KWH:
+    if ac > _TOLERANCE_KWH and ac > max(-surplus, 0.0) + _MIN_GRID_ORDER_KWH:
         step.mode = MODE_SELL
         step.fixed_w = ac / hours * 1000.0
         step.max_discharge_w = step.fixed_w

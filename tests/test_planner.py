@@ -9,7 +9,9 @@ from custom_components.hems_batterij.planner import (
     MODE_SELL,
     BatteryModel,
     PlanSlot,
+    PlanStep,
     Priorities,
+    _classify,
     break_even_spread,
     make_plan,
 )
@@ -176,3 +178,37 @@ def test_morning_sale_still_allowed_when_it_really_pays():
     pv = [0.0] * 4 + [0.8] * 28 + [0.0] * 12
     plan = make_plan(slots(prices, pv=pv, load=0.1), BATTERY, soc_now_kwh=8.2, created=T0)
     assert any(s.mode == MODE_SELL for s in plan.steps[:4])
+
+
+def _step(ac_kwh, soc_start=3.0):
+    return PlanStep(
+        start=T0,
+        end=T0 + Q,
+        buy=0.24,
+        sell=0.24,
+        pv_kwh=0.0,
+        load_kwh=0.1,
+        soc_start_kwh=soc_start,
+        soc_end_kwh=soc_start - ac_kwh,
+        battery_ac_kwh=ac_kwh,
+        grid_kwh=0.1 + ac_kwh,
+        cost_eur=0.0,
+        baseline_cost_eur=0.0,
+    )
+
+
+def test_tiny_grid_orders_are_not_worth_a_fixed_command():
+    # 22 okt 05:15: plan wilde 0,05 kWh uit het net laden, verschil met de middag < 0,1 ct.
+    slot = slots([0.24])[0]
+    tiny = _step(-0.05)
+    _classify(tiny, slot, BATTERY)
+    assert tiny.mode == MODE_HOLD and tiny.fixed_w is None
+    real = _step(-0.3)
+    _classify(real, slot, BATTERY)
+    assert real.mode == MODE_GRID_CHARGE and real.fixed_w == pytest.approx(-1200)
+    tiny_sell = _step(0.15)  # huis vraagt 0,1, dus maar 0,05 kWh naar het net
+    _classify(tiny_sell, slot, BATTERY)
+    assert tiny_sell.mode == MODE_SELF_CONSUMPTION
+    real_sell = _step(0.4)
+    _classify(real_sell, slot, BATTERY)
+    assert real_sell.mode == MODE_SELL
