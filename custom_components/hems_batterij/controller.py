@@ -10,7 +10,8 @@ Geen Home Assistant-imports, zodat dit los te testen is.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta
 
 from .planner import (
     MODE_GRID_CHARGE,
@@ -192,6 +193,78 @@ def allocate(total_w: float, batteries: list[BatteryState], settings: Controller
     return {name: round(sign * w, 0) for name, w in result.items()}
 
 
+@dataclass
+class _Cap:
+    watt: float
+    since: datetime
+
+
+class PowerCapLearner:
+    """Leert wanneer een batterij structureel minder levert dan gevraagd.
+
+    Voorbeeld: een Venus E V3 die na een storing terugvalt op 800 W ontladen, terwijl
+    de ingestelde grens 2500 W zegt. Zonder dit blijft HEMS het grootste deel aan die
+    batterij vragen en komt het tekort uit het net, terwijl de andere batterij nog
+    ruimte heeft. Na `confirm_seconds` aanhoudend tekort geldt wat hij wél levert als
+    grens; na `retry_after` proberen we het opnieuw met de gewone grens.
+    """
+
+    def __init__(
+        self,
+        shortfall_w: float = 150.0,
+        confirm_seconds: float = 30.0,
+        retry_after: timedelta = timedelta(minutes=30),
+    ) -> None:
+        self.shortfall_w = shortfall_w
+        self.confirm_seconds = confirm_seconds
+        self.retry_after = retry_after
+        self._caps: dict[tuple[str, str], _Cap] = {}
+        self._short_since: dict[tuple[str, str], datetime] = {}
+
+    def observe(self, name: str, commanded_w: float, actual_w: float | None, now: datetime) -> str | None:
+        """Vergelijk de vorige opdracht met wat de batterij nu doet.
+
+        Geeft een korte tekst terug als er net een grens is geleerd.
+        """
+        if actual_w is None or abs(commanded_w) < self.shortfall_w:
+            for direction in ("ontladen", "laden"):
+                self._short_since.pop((name, direction), None)
+            return None
+        direction = "ontladen" if commanded_w > 0 else "laden"
+        key = (name, direction)
+        delivered = max(0.0, actual_w if commanded_w > 0 else -actual_w)
+        if abs(commanded_w) - delivered < self.shortfall_w:
+            self._short_since.pop(key, None)
+            return None
+        start = self._short_since.setdefault(key, now)
+        if (now - start).total_seconds() < self.confirm_seconds:
+            return None
+        self._short_since.pop(key, None)
+        self._caps[key] = _Cap(watt=round(delivered, 0), since=now)
+        return f"{name} levert bij {direction} maar {delivered:.0f} W van {abs(commanded_w):.0f} W gevraagd"
+
+    def caps(self, now: datetime) -> dict[tuple[str, str], float]:
+        for key in [k for k, c in self._caps.items() if now - c.since >= self.retry_after]:
+            del self._caps[key]
+        return {key: cap.watt for key, cap in self._caps.items()}
+
+    def apply(self, batteries: list[BatteryState], now: datetime) -> list[BatteryState]:
+        """Dezelfde batterijen, met geleerde grenzen in plaats van de ingestelde."""
+        caps = self.caps(now)
+        result = []
+        for b in batteries:
+            down = caps.get((b.name, "ontladen"))
+            up = caps.get((b.name, "laden"))
+            result.append(
+                replace(
+                    b,
+                    max_discharge_w=min(b.max_discharge_w, down) if down is not None else b.max_discharge_w,
+                    max_charge_w=min(b.max_charge_w, up) if up is not None else b.max_charge_w,
+                )
+            )
+        return result
+
+
 def safety_reasons(
     batteries: list[BatteryState],
     p1_available: bool,
@@ -274,6 +347,7 @@ __all__ = [
     "ControlResult",
     "ControlTarget",
     "ControllerSettings",
+    "PowerCapLearner",
     "allocate",
     "control_step",
     "desired_total_w",

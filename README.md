@@ -86,7 +86,10 @@ zonder bruikbare batterij wordt niets voorgesteld. Is Zonneplan niet bereikbaar 
 zonder internet), dan plant hij door met de laatst bekende prijzen, ook na een herstart; attribuut
 `prijsbron` van Verwachte besparing laat dat zien. Zijn er helemaal geen prijzen meer, dan valt hij
 terug op gewoon zelfverbruik. Laden wordt teruggeschroefd als de netafname boven
-16 kW (3x25A met marge) zou komen.
+16 kW (3x25A met marge) zou komen. Levert een batterij 30 s lang duidelijk minder dan gevraagd
+(bijvoorbeeld een Venus E V3 die na een storing op 800 W ontladen blijft hangen), dan geldt wat hij
+wél levert als grens en gaat de rest naar de andere batterij; na een half uur probeert HEMS het
+opnieuw met de ingestelde grens.
 
 **Schaduwbatterij (meekijkmodus).** Het voorstel rekent met de echte stand van de batterijen
 (die HBC bepaalt): "wat zou HEMS nu doen met deze batterij". Daarmee is de besparing van HEMS

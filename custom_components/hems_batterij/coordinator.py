@@ -77,6 +77,7 @@ from .controller import (
     ControllerSettings,
     ControlResult,
     ControlTarget,
+    PowerCapLearner,
     control_step,
 )
 from .forecast import (
@@ -185,6 +186,9 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         self.profile = LoadProfile(default_w=float(self._conf(CONF_DEFAULT_LOAD_W)))
         self._plan: Plan | None = None
         self._previous_total: float | None = None
+        # Wat elke batterij echt kan leveren als dat minder is dan zijn ingestelde grens.
+        self.power_caps = PowerCapLearner()
+        self._last_commanded: dict[str, float] = {}
         self._last_mode: str | None = None
         self._last_tick: datetime | None = None
         self._quarter_start: datetime | None = None
@@ -488,7 +492,8 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
     async def async_replan(self, trigger: str) -> None:
         now = dt_util.now()
         all_batteries = self._read_batteries(now)
-        batteries = self._planned_batteries(all_batteries)
+        # Met geleerde grenzen: een batterij die maar 800 W kan ontladen, plannen we zo.
+        batteries = self.power_caps.apply(self._planned_batteries(all_batteries), now)
         model = self._battery_model(batteries)
         price_state = self._state(self._conf(CONF_PRICE_SENSOR))
         fresh = parse_zonneplan_forecast(price_state.attributes if price_state else None)
@@ -634,6 +639,16 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                     reason=f"niet {verb}: HBC ({sub or 'onbekend'}) zou de andere batterij "
                     f"ertegenin laten werken; {target.reason}",
                 )
+        if active:
+            for b in planned:
+                asked = self._last_commanded.get(b.name, 0.0)
+                note = self.power_caps.observe(b.name, asked, b.ac_power_w, now)
+                if note:
+                    mode = target.mode if target else MODE_SAFETY
+                    self._add_log(now, mode, f"{note}; rest naar de andere batterij")
+            planned = self.power_caps.apply(planned, now)
+        else:
+            self._last_commanded.clear()
         result = control_step(
             target,
             p1,
@@ -652,6 +667,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                 max_w = b.max_discharge_w if watt > 0 else b.max_charge_w
                 actuator = self._actuator(b.name)
                 commands[b.name] = await actuator.async_apply(watt, max_w, now)
+                self._last_commanded[b.name] = max(-max_w, min(max_w, watt))
                 if actuator.last_error:
                     errors.append(actuator.last_error)
 
@@ -696,7 +712,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         data.house_w = house
         data.battery_actual_w = planned_w if planned else None
         data.battery_actual_per = {b.name: b.ac_power_w for b in batteries}
-        data.soc_total_kwh = sum(b.soc_kwh for b in planned if b.soc_pct is not None)
+        data.soc_total_kwh = sum(b.soc_kwh for b in batteries if b.soc_pct is not None)
         data.efficiency = model.roundtrip_efficiency if model else None
         data.wear_eur_per_kwh = model.wear_eur_per_kwh if model else None
         if model and step:
