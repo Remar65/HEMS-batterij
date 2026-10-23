@@ -105,3 +105,45 @@ def test_tracks_existing_battery_power():
     # Batterijen leveren al 1000 W, P1 is nog 200 W afname: totaal naar 1200 W.
     result = control_step(SELF, 200, [bat("m1", 50, 500), bat("m2", 50, 500)], None, SETTINGS)
     assert result.total_w == 1200
+
+
+def test_power_cap_learner_moves_shortfall_to_other_battery():
+    from datetime import datetime, timedelta
+
+    from custom_components.hems_batterij.controller import PowerCapLearner
+
+    learner = PowerCapLearner()
+    t0 = datetime(2026, 10, 23, 16, 0)
+    # M2 krijgt 1500 W gevraagd maar levert 797 W (na een storing teruggevallen op 800 W).
+    assert learner.observe("m2", 1500, 797, t0) is None
+    assert learner.observe("m2", 1500, 797, t0 + timedelta(seconds=10)) is None
+    note = learner.observe("m2", 1500, 797, t0 + timedelta(seconds=35))
+    assert note and "797" in note
+    now = t0 + timedelta(seconds=40)
+    capped = learner.apply([bat("m1", 50), bat("m2", 50)], now)
+    assert capped[1].max_discharge_w == 797
+    assert capped[1].max_charge_w == 2500
+    assert capped[0].max_discharge_w == 2500
+    per = allocate(1900, capped, SETTINGS)
+    assert per["m2"] == 797
+    assert per["m1"] == 1103
+    # Na een half uur opnieuw proberen met de gewone grens.
+    later = learner.apply([bat("m2", 50)], t0 + timedelta(minutes=31))
+    assert later[0].max_discharge_w == 2500
+
+
+def test_power_cap_learner_ignores_ramp_and_small_commands():
+    from datetime import datetime, timedelta
+
+    from custom_components.hems_batterij.controller import PowerCapLearner
+
+    learner = PowerCapLearner()
+    t0 = datetime(2026, 10, 23, 16, 0)
+    # Even achterlopen bij het opbouwen van vermogen is geen grens.
+    learner.observe("m1", 2000, 300, t0)
+    learner.observe("m1", 2000, 1950, t0 + timedelta(seconds=10))
+    assert learner.observe("m1", 2000, 300, t0 + timedelta(seconds=35)) is None
+    # Kleine opdrachten tellen niet mee.
+    learner.observe("m1", 100, 0, t0)
+    assert learner.observe("m1", 100, 0, t0 + timedelta(seconds=60)) is None
+    assert learner.caps(t0 + timedelta(seconds=60)) == {}
