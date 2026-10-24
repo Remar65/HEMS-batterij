@@ -20,6 +20,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, State, callback
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_change,
@@ -44,6 +45,8 @@ from .const import (
     CONF_NETTING_ACTIVE,
     CONF_NETTING_END,
     CONF_P1_POWER,
+    CONF_PRICE_FORECAST,
+    CONF_PRICE_FORECAST_URL,
     CONF_PRICE_SENSOR,
     CONF_PV_INVERTED,
     CONF_PV_POWER,
@@ -64,6 +67,8 @@ from .const import (
     HBC_SELL_TARGET_SOC_ENTITY,
     HBC_SUB_STRATEGY_ENTITY,
     PLAN_STEP_KWH,
+    PRICE_FORECAST_MAX_AGE_HOURS,
+    PRICE_FORECAST_TIMEOUT_SECONDS,
     PV_SOURCE_HELIOS,
     PV_SOURCE_SOLCAST,
     RS485_DISABLED,
@@ -98,6 +103,16 @@ from .planner import (
     Priorities,
     break_even_spread,
     make_plan,
+)
+from .price_forecast import (
+    ForecastPoint,
+    ForecastSkill,
+    Tariff,
+    default_tariff,
+    fit_tariff,
+    forecast_blocks,
+    hourly_buy,
+    parse_epexpredictor,
 )
 from .prices import PriceSlot, parse_zonneplan_forecast, upcoming_slots
 from .shadow import ShadowBattery
@@ -143,6 +158,7 @@ class HemsData:
     shadow_result: ControlResult | None = None
     pv_source: str | None = None
     price_source: str | None = None
+    price_forecast: dict[str, Any] = field(default_factory=dict)
     control_active: bool = False
     controlled: list[str] = field(default_factory=list)
     commands: dict[str, Command] = field(default_factory=dict)
@@ -200,6 +216,12 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         self._saving_total = 0.0
         self._saving_since: datetime | None = None
         self._last_price_count = -1
+        # Prijsvoorspelling voor de dagen na de bekende prijzen, en hoe goed die tot nu toe was.
+        self._forecast_points: list[ForecastPoint] = []
+        self._forecast_fetched: datetime | None = None
+        self._forecast_error: str | None = None
+        self._tariff: Tariff | None = None
+        self.forecast_skill = ForecastSkill()
         self.shadow = ShadowBattery()
         self._shadow_cost_today = 0.0
         self._shadow_saving_total = 0.0
@@ -273,6 +295,11 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         elif stored.get("shadow"):
             self._add_log(dt_util.now(), "info", "schaduwbatterij te oud; opnieuw gestart bij de echte stand")
         self._last_prices = _prices_from_store(stored.get("prices"))
+        forecast = stored.get("price_forecast") or {}
+        self._forecast_fetched = dt_util.parse_datetime(forecast.get("fetched") or "")
+        self._forecast_points = _forecast_from_store(forecast.get("points"))
+        self._tariff = Tariff.from_list(forecast.get("tariff"))
+        self.forecast_skill = ForecastSkill.from_dict(stored.get("forecast_skill"))
 
         self._unsubs.append(
             async_track_time_interval(self.hass, self._async_fast_tick, timedelta(seconds=FAST_LOOP_SECONDS))
@@ -285,6 +312,10 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                 self.hass, [self._conf(CONF_PRICE_SENSOR)], self._async_price_changed
             )
         )
+        self._unsubs.append(
+            async_track_time_change(self.hass, self._async_fetch_forecast, minute=7, second=30)
+        )
+        await self._async_fetch_forecast(dt_util.now())
         await self.async_replan("opstart")
         await self._async_fast_tick(dt_util.now())
 
@@ -319,6 +350,12 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             "prices": [
                 [p.start.isoformat(), p.end.isoformat(), p.buy, p.buy_ex_tax] for p in self._last_prices
             ],
+            "price_forecast": {
+                "fetched": self._forecast_fetched.isoformat() if self._forecast_fetched else None,
+                "points": [[p.start.isoformat(), p.end.isoformat(), p.raw] for p in self._forecast_points],
+                "tariff": self._tariff.to_list() if self._tariff else None,
+            },
+            "forecast_skill": self.forecast_skill.to_dict(),
         }
 
     # ------------------------------------------------------------- read state
@@ -489,6 +526,91 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             periods.extend(parse_solcast_detailed(state.attributes if state else None, field_name))
         return periods, PV_SOURCE_SOLCAST + reason
 
+    async def _async_fetch_forecast(self, now: datetime) -> None:
+        """Haal de prijsvoorspelling op (elk uur) en leer van eerdere voorspellingen."""
+        if not self._conf(CONF_PRICE_FORECAST):
+            return
+        url = str(self._conf(CONF_PRICE_FORECAST_URL) or "")
+        if not url:
+            return
+        try:
+            session = async_get_clientsession(self.hass)
+            async with asyncio.timeout(PRICE_FORECAST_TIMEOUT_SECONDS), session.get(url) as response:
+                response.raise_for_status()
+                payload = await response.json(content_type=None)
+        except Exception as err:  # noqa: BLE001 - elke fout: gewoon zonder (nieuwe) voorspelling verder
+            if self._forecast_error is None:
+                self._add_log(now, "info", f"prijsvoorspelling niet opgehaald: {err}")
+            self._forecast_error = str(err)
+            return
+        points = parse_epexpredictor(payload)
+        if not points:
+            self._forecast_error = "lege of onleesbare voorspelling"
+            return
+        self._forecast_error = None
+        self._forecast_points = points
+        self._forecast_fetched = now
+        tariff = fit_tariff(self._last_prices, points)
+        if tariff is not None:
+            self._tariff = tariff
+        # Leren: de eerste voorspelling van elke dag bewaren voor wat Zonneplan nog niet kent,
+        # en eerdere voorspellingen naast de echte prijzen leggen.
+        known_until = max((p.end for p in self._last_prices), default=now)
+        hourly = {
+            hour: buy
+            for hour, (buy, _ex) in hourly_buy(points, self._tariff or default_tariff(), now.tzinfo).items()
+            if hour >= known_until
+        }
+        self.forecast_skill.record(now, hourly)
+        self.forecast_skill.score(self._last_prices, now.tzinfo)
+        await self._store.async_save(self._storage_payload())
+
+    def _forecast_slots(
+        self, prices: list[PriceSlot], now: datetime, netting_end: datetime, feed_in_cost: float,
+        pv_periods: list[PvPeriod],
+    ) -> list[PlanSlot]:
+        """Uurblokken met (gedempte) voorspelde prijzen na de bekende prijzen."""
+        info: dict[str, Any] = {"actief": bool(self._conf(CONF_PRICE_FORECAST))}
+        self.data.price_forecast = info
+        if not info["actief"]:
+            return []
+        info["opgehaald"] = self._forecast_fetched.isoformat() if self._forecast_fetched else None
+        info["fout"] = self._forecast_error
+        info["per_dag_vooruit"] = self.forecast_skill.summary()
+        fresh = (
+            self._forecast_fetched is not None
+            and (now - self._forecast_fetched).total_seconds() <= PRICE_FORECAST_MAX_AGE_HOURS * 3600
+        )
+        if not fresh or not self._forecast_points or not prices:
+            return []
+        tariff = self._tariff or default_tariff()
+        info["omrekening"] = "geleerd" if tariff.fitted_on else "standaard"
+        reference = sum(p.buy for p in prices) / len(prices)
+        blocks = forecast_blocks(
+            self._forecast_points, tariff, self.forecast_skill, prices[-1].end, now, reference
+        )
+        if not blocks:
+            return []
+        info["tot"] = blocks[-1].end.isoformat()
+        slots: list[PlanSlot] = []
+        for block in blocks:
+            if block.start < netting_end:
+                sell = block.buy
+            else:
+                sell = block.buy_ex_tax - feed_in_cost
+            slots.append(
+                PlanSlot(
+                    start=block.start,
+                    end=block.end,
+                    buy=block.buy,
+                    sell=sell,
+                    pv_kwh=pv_kwh_between(pv_periods, block.start, block.end),
+                    load_kwh=self.profile.kwh_between(block.start, block.end),
+                    forecast=True,
+                )
+            )
+        return slots
+
     async def async_replan(self, trigger: str) -> None:
         now = dt_util.now()
         all_batteries = self._read_batteries(now)
@@ -539,6 +661,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                     load_kwh=self.profile.kwh_between(start, end),
                 )
             )
+        slots.extend(self._forecast_slots(prices, now, netting_end, feed_in_cost, pv_periods))
         soc_now = sum(b.soc_kwh for b in batteries if b.soc_pct is not None)
         priorities = Priorities(
             solar_first_eur_per_kwh=float(self._conf(CONF_SOLAR_FIRST_CT)) / 100.0,
@@ -836,3 +959,16 @@ def _prices_from_store(raw: Any) -> list[PriceSlot]:
         except (TypeError, ValueError, IndexError):
             continue
     return slots
+
+
+def _forecast_from_store(raw: Any) -> list[ForecastPoint]:
+    """Bewaarde voorspelling terug; iets onleesbaars betekent gewoon geen voorspelling."""
+    points: list[ForecastPoint] = []
+    for item in raw or []:
+        try:
+            start, end = dt_util.parse_datetime(item[0]), dt_util.parse_datetime(item[1])
+            if start and end:
+                points.append(ForecastPoint(start, end, float(item[2])))
+        except (TypeError, ValueError, IndexError):
+            continue
+    return points

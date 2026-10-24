@@ -84,6 +84,7 @@ class PlanSlot:
     sell: float  # €/kWh
     pv_kwh: float
     load_kwh: float
+    forecast: bool = False  # prijs is een (gedempte) voorspelling, nog niet door Zonneplan bekend
 
     @property
     def hours(self) -> float:
@@ -111,9 +112,10 @@ class PlanStep:
     max_charge_w: float = 0.0
     max_discharge_w: float = 0.0
     reason: str = ""
+    forecast: bool = False
 
     def as_dict(self) -> dict:
-        return {
+        data = {
             "start": self.start.isoformat(),
             "modus": self.mode,
             "batterij_kwh": round(self.battery_ac_kwh, 3),
@@ -122,6 +124,9 @@ class PlanStep:
             "prijs": round(self.buy, 4),
             "reden": self.reason,
         }
+        if self.forecast:
+            data["voorspeld"] = True
+        return data
 
 
 @dataclass
@@ -305,6 +310,7 @@ def make_plan(
             grid_kwh=grid,
             cost_eur=_grid_cost(grid, slot) + wear,
             baseline_cost_eur=_grid_cost(net_load, slot),
+            forecast=slot.forecast,
         )
         _classify(step, slot, battery)
         plan.steps.append(step)
@@ -351,20 +357,28 @@ def _classify(step: PlanStep, slot: PlanSlot, battery: BatteryModel) -> None:
         step.max_charge_w = full_charge_w
 
 
+def _peak_later(later: list[PlanStep], default: float) -> tuple[float, str]:
+    """Hoogste latere prijs, met ' (voorspeld)' als die uit de prijsvoorspelling komt."""
+    best = max(later, key=lambda s: s.buy, default=None)
+    if best is None:
+        return default, ""
+    return best.buy, " (voorspeld)" if best.forecast else ""
+
+
 def _explain(plan: Plan, battery: BatteryModel, prio: Priorities) -> None:
     """Geef elke stap een korte, leesbare reden."""
     steps = plan.steps
     for idx, step in enumerate(steps):
         later = steps[idx + 1 :]
         if step.mode == MODE_GRID_CHARGE:
-            peak = max((s.buy for s in later), default=step.buy)
+            peak, tag = _peak_later(later, step.buy)
             spread = peak - step.buy
             need = (
                 break_even_spread(step.buy, battery.roundtrip_efficiency, battery.wear_eur_per_kwh)
                 + prio.trade_margin_eur_per_kwh
             )
             step.reason = (
-                f"laden uit net à {step.buy * 100:.1f} ct; later tot {peak * 100:.1f} ct "
+                f"laden uit net à {step.buy * 100:.1f} ct; later tot {peak * 100:.1f} ct{tag} "
                 f"(verschil {spread * 100:.1f} ct, nodig {need * 100:.1f} ct)"
             )
         elif step.mode == MODE_SELL:
@@ -372,9 +386,10 @@ def _explain(plan: Plan, battery: BatteryModel, prio: Priorities) -> None:
                 f"verkopen à {step.sell * 100:.1f} ct: hoger dan wat de opgeslagen kWh later nog oplevert"
             )
         elif step.mode == MODE_HOLD:
-            peak = max((s.buy for s in later), default=step.buy)
+            peak, tag = _peak_later(later, step.buy)
             step.reason = (
-                f"niet ontladen bij {step.buy * 100:.1f} ct; bewaren voor later (tot {peak * 100:.1f} ct)"
+                f"niet ontladen bij {step.buy * 100:.1f} ct; "
+                f"bewaren voor later (tot {peak * 100:.1f} ct{tag})"
             )
         elif step.soc_end_kwh >= battery.soc_max_kwh - _TOLERANCE_KWH and step.pv_kwh > step.load_kwh:
             step.reason = "batterij vol: zon-overschot gaat naar het net"

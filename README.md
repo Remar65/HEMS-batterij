@@ -64,6 +64,18 @@ alleen om ruimte te maken voor de zon; nu beslist dan alleen het echte prijsvers
 Wat aan het einde van de horizon nog in de batterij zit krijgt een restwaarde, zodat hij niet
 om middernacht leeggegooid wordt omdat de prijzen van morgen nog onbekend zijn.
 
+**Prijsvoorspelling (v0.4).** Na de bekende Zonneplan-prijzen kijkt de planner tot 7 dagen verder
+met een voorspelde prijs per uur (nu EpexPredictor, kale beursprijs NL; jeroen.nl volgt). De kale
+prijs wordt omgerekend naar Zonneplan met een verhouding die HEMS leert uit de uren waarvoor beide
+bekend zijn. HEMS bewaart elke dag de voorspelling en legt die later naast de echte prijzen, per
+aantal dagen vooruit. Daaruit volgt een vertrouwen (1 - fout / spreiding van de echte prijzen):
+voorspelde prijzen schuiven met dat vertrouwen naar het gemiddelde, zodat een onzekere dag weinig
+prijsverschil overhoudt. De planner laadt dus alleen "voor over een paar dagen" als dat ook na
+demping, rendement, slijtage en handelsmarge nog loont. Er wordt elk kwartier opnieuw gepland;
+de voorspelling beslist alleen of er nu geladen of vastgehouden wordt. Attribuut `prijsvoorspelling`
+van *Verwachte besparing plan* toont bron, horizon en vertrouwen en fout per dag vooruit; plan-
+stappen op voorspelde prijzen hebben `voorspeld: true`. Uit te zetten in de opties.
+
 Elk kwartier krijgt een modus met een leesbare reden:
 
 | Modus | Betekenis |

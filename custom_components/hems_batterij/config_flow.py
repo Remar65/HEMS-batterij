@@ -20,6 +20,8 @@ from .const import (
     CONF_NETTING_ACTIVE,
     CONF_NETTING_END,
     CONF_P1_POWER,
+    CONF_PRICE_FORECAST,
+    CONF_PRICE_FORECAST_URL,
     CONF_PRICE_SENSOR,
     CONF_PV_INVERTED,
     CONF_PV_POWER,
@@ -127,6 +129,8 @@ class HemsOptionsFlow(OptionsFlow):
                 vol.Required(CONF_INVESTMENT_EUR, default=current[CONF_INVESTMENT_EUR]): vol.All(
                     vol.Coerce(float), vol.Range(min=0, max=100000)
                 ),
+                vol.Required(CONF_PRICE_FORECAST, default=current[CONF_PRICE_FORECAST]): bool,
+                vol.Required(CONF_PRICE_FORECAST_URL, default=current[CONF_PRICE_FORECAST_URL]): str,
                 vol.Required(CONF_PV_SOURCE, default=current[CONF_PV_SOURCE]): vol.In(
                     [PV_SOURCE_HELIOS, PV_SOURCE_SOLCAST]
                 ),
