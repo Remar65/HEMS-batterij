@@ -151,6 +151,7 @@ SENSORS: tuple[HemsSensorDescription, ...] = (
             "horizon_tot": d.plan.steps[-1].end.isoformat() if d.plan and d.plan.steps else None,
             "zonbron": d.pv_source,
             "prijsbron": d.price_source,
+            "prijsvoorspelling": d.price_forecast,
         },
     ),
     HemsSensorDescription(

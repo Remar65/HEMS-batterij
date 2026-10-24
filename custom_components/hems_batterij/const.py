@@ -36,6 +36,9 @@ CONF_SOLAR_FIRST_CT = "solar_first_ct"
 CONF_TRADE_MARGIN_CT = "trade_margin_ct"
 CONF_INVESTMENT_EUR = "investment_eur"
 CONF_FEED_IN_COST_CT = "feed_in_cost_ct"
+CONF_PRICE_FORECAST = "price_forecast"
+CONF_PRICE_FORECAST_URL = "price_forecast_url"
+CONF_PRICE_FORECAST_JEROEN = "price_forecast_jeroen"
 
 DEFAULTS = {
     CONF_P1_POWER: "sensor.p1_meter_power",
@@ -66,6 +69,11 @@ DEFAULTS = {
     CONF_INVESTMENT_EUR: 2625.0,
     # Terugleverkosten per kWh na de saldering (nu nog onbekend, dus 0).
     CONF_FEED_IN_COST_CT: 0.0,
+    # Prijsvoorspelling voor de dagen na de bekende Zonneplan-prijzen (Marco, 24 okt 2026:
+    # "jeroen.nl + leren"). jeroen.nl eerst; lukt dat niet, dan EpexPredictor (de URL).
+    CONF_PRICE_FORECAST: True,
+    CONF_PRICE_FORECAST_JEROEN: True,
+    CONF_PRICE_FORECAST_URL: "https://epexpredictor.batzill.com/prices_short?region=NL&unit=EUR_PER_KWH&hours=168",
     # Batterijen die HEMS zelf aanstuurt (leeg = alleen meekijken). Marco, 17 okt 2026:
     # eerst alleen de M2; de M1 blijft bij HBC.
     CONF_CONTROLLED: [],
@@ -137,6 +145,11 @@ FAST_LOOP_SECONDS = 5
 STALE_P1_SECONDS = 30
 STALE_BATTERY_SECONDS = 120
 PLAN_STEP_KWH = 0.1
+PRICE_FORECAST_MAX_AGE_HOURS = 36  # oudere voorspelling niet meer gebruiken
+PRICE_FORECAST_TIMEOUT_SECONDS = 20
+# Publieke MCP-server van jeroen.nl: gratis voor eigen domotica, max 60 aanroepen per uur
+# per IP-adres (https://jeroen.nl/api-voorwaarden). Wij vragen één keer per uur.
+JEROEN_MCP_URL = "https://jeroen.nl/mcp"
 DECISION_LOG_SIZE = 50
 
 STORAGE_VERSION = 1

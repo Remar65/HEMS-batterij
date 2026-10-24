@@ -41,7 +41,10 @@
           "feed_in_cost_ct": "Feed-in cost after net metering ends (ct/kWh)",
           "pv_source": "Solar forecast source (helios or solcast; solcast is the fallback)",
           "helios_entities": "Helios forecast sensors (power_now, one per panel field)",
-          "controlled_batteries": "Batteries HEMS controls (empty = observe only; also needs the 'HEMS controls' switch)"
+          "controlled_batteries": "Batteries HEMS controls (empty = observe only; also needs the 'HEMS controls' switch)",
+          "price_forecast": "Use price forecast for the days after the known prices",
+          "price_forecast_jeroen": "Use jeroen.nl as the first forecast source (with 80% band)",
+          "price_forecast_url": "Fallback price forecast URL (EpexPredictor prices_short)"
         }
       }
     }
