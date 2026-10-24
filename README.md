@@ -65,7 +65,9 @@ Wat aan het einde van de horizon nog in de batterij zit krijgt een restwaarde, z
 om middernacht leeggegooid wordt omdat de prijzen van morgen nog onbekend zijn.
 
 **Prijsvoorspelling (v0.4).** Na de bekende Zonneplan-prijzen kijkt de planner tot 7 dagen verder
-met een voorspelde prijs per uur (nu EpexPredictor, kale beursprijs NL; jeroen.nl volgt). De kale
+met een voorspelde prijs per uur. Bron is jeroen.nl (publieke MCP-server, gratis voor eigen
+domotica, elk uur één aanroep; kale beursprijs NL met een 80%-band uit een weer-ensemble). Lukt dat
+niet, dan EpexPredictor via de ingestelde URL. De kale
 prijs wordt omgerekend naar Zonneplan met een verhouding die HEMS leert uit de uren waarvoor beide
 bekend zijn. HEMS bewaart elke dag de voorspelling en legt die later naast de echte prijzen, per
 aantal dagen vooruit. Daaruit volgt een vertrouwen (1 - fout / spreiding van de echte prijzen):
@@ -73,8 +75,11 @@ voorspelde prijzen schuiven met dat vertrouwen naar het gemiddelde, zodat een on
 prijsverschil overhoudt. De planner laadt dus alleen "voor over een paar dagen" als dat ook na
 demping, rendement, slijtage en handelsmarge nog loont. Er wordt elk kwartier opnieuw gepland;
 de voorspelling beslist alleen of er nu geladen of vastgehouden wordt. Attribuut `prijsvoorspelling`
-van *Verwachte besparing plan* toont bron, horizon en vertrouwen en fout per dag vooruit; plan-
-stappen op voorspelde prijzen hebben `voorspeld: true`. Uit te zetten in de opties.
+van *Verwachte besparing plan* toont bron, horizon, per voorspelde dag gemiddelde, laagste en
+hoogste prijs met de 80%-band, en per dag vooruit het vertrouwen, de fout en hoe vaak de echte prijs
+binnen de band viel (`binnen_band_pct`, hoort rond 80% te liggen). De band stuurt de planner nog
+niet: eerst meten of hij klopt. Plan-stappen op voorspelde prijzen hebben `voorspeld: true`.
+Beide bronnen zijn uit te zetten in de opties.
 
 Elk kwartier krijgt een modus met een leesbare reden:
 

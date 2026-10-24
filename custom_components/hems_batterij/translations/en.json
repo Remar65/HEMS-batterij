@@ -43,7 +43,8 @@
           "helios_entities": "Helios forecast sensors (power_now, one per panel field)",
           "controlled_batteries": "Batteries HEMS controls (empty = observe only; also needs the 'HEMS controls' switch)",
           "price_forecast": "Use price forecast for the days after the known prices",
-          "price_forecast_url": "Price forecast URL (EpexPredictor prices_short)"
+          "price_forecast_jeroen": "Use jeroen.nl as the first forecast source (with 80% band)",
+          "price_forecast_url": "Fallback price forecast URL (EpexPredictor prices_short)"
         }
       }
     }

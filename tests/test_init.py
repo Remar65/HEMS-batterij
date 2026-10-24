@@ -150,3 +150,61 @@ async def test_rs485_disabled_counts_as_safety(hass: HomeAssistant) -> None:
     assert not any("marstek_m1" in r for r in result.safety_reasons)
     assert result.per_battery_w["marstek_m2"] == 0
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+def _jeroen_answer(start) -> dict:
+    """Antwoord van jeroen.nl: vandaag bekend, daarna voorspeld met band."""
+    rows = []
+    for q in range(96 * 4):
+        t = start + timedelta(minutes=15 * q)
+        utc = dt_util.as_utc(t).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if q < 48:
+            rows.append([t.strftime("%Y-%m-%d %H:%M"), 0.05 if q < 16 else 0.30, None, None, None, utc])
+        else:
+            rows.append([t.strftime("%Y-%m-%d %H:%M"), None, 0.10, 0.15, 0.25, utc])
+    content = {
+        "resolution": "quarter",
+        "columns": [
+            "time_local", "known_market_price", "forecast_p10", "forecast_p50", "forecast_p90", "time_utc"
+        ],
+        "rows": rows,
+    }
+    return {"jsonrpc": "2.0", "id": 1, "result": {"structuredContent": content, "isError": False}}
+
+
+async def test_price_forecast_prefers_jeroen_and_falls_back(hass: HomeAssistant, aioclient_mock) -> None:
+    from custom_components.hems_batterij.const import JEROEN_MCP_URL
+
+    _set_states(hass)
+    start = dt_util.now().replace(minute=0, second=0, microsecond=0)
+    aioclient_mock.post(JEROEN_MCP_URL, json=_jeroen_answer(start))
+    epex_url = DEFAULTS["price_forecast_url"]
+    aioclient_mock.get(epex_url, json={"s": [], "t": []})
+
+    entry = MockConfigEntry(domain=DOMAIN, data={"batteries": "marstek_m1, marstek_m2"})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data
+    await coordinator.async_replan("test")
+
+    info = coordinator.data.price_forecast
+    assert info["bron"] == "jeroen.nl"
+    assert info["fout"] is None
+    assert info["dagen"] and "band_80pct_ct" in info["dagen"][0]
+    assert all(p.low is not None for p in coordinator._forecast_points if p.raw == 0.15)
+    assert not any(call[1].host == "epexpredictor.batzill.com" for call in aioclient_mock.mock_calls)
+
+    # jeroen.nl valt uit: dan EpexPredictor.
+    aioclient_mock.clear_requests()
+    aioclient_mock.post(JEROEN_MCP_URL, status=503)
+    ts = int(dt_util.as_timestamp(start))
+    aioclient_mock.get(epex_url, json={"s": [ts + 900 * i for i in range(96 * 4)], "t": [0.12] * (96 * 4)})
+    await coordinator._async_fetch_forecast(dt_util.now())
+    await coordinator.async_replan("test")
+    info = coordinator.data.price_forecast
+    assert info["bron"] == "EpexPredictor"
+    assert "jeroen.nl" in info["fout"]
+
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    await hass.async_block_till_done()

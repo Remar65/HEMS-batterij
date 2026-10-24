@@ -46,6 +46,7 @@ from .const import (
     CONF_NETTING_END,
     CONF_P1_POWER,
     CONF_PRICE_FORECAST,
+    CONF_PRICE_FORECAST_JEROEN,
     CONF_PRICE_FORECAST_URL,
     CONF_PRICE_SENSOR,
     CONF_PV_INVERTED,
@@ -66,6 +67,7 @@ from .const import (
     HBC_CUTOFF_PATTERNS,
     HBC_SELL_TARGET_SOC_ENTITY,
     HBC_SUB_STRATEGY_ENTITY,
+    JEROEN_MCP_URL,
     PLAN_STEP_KWH,
     PRICE_FORECAST_MAX_AGE_HOURS,
     PRICE_FORECAST_TIMEOUT_SECONDS,
@@ -105,14 +107,20 @@ from .planner import (
     make_plan,
 )
 from .price_forecast import (
+    EPEX_SOURCE,
+    JEROEN_SOURCE,
+    ForecastBlock,
     ForecastPoint,
     ForecastSkill,
     Tariff,
     default_tariff,
     fit_tariff,
     forecast_blocks,
+    hourly_band,
     hourly_buy,
+    jeroen_request,
     parse_epexpredictor,
+    parse_jeroen,
 )
 from .prices import PriceSlot, parse_zonneplan_forecast, upcoming_slots
 from .shadow import ShadowBattery
@@ -220,6 +228,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         self._forecast_points: list[ForecastPoint] = []
         self._forecast_fetched: datetime | None = None
         self._forecast_error: str | None = None
+        self._forecast_source: str | None = None
         self._tariff: Tariff | None = None
         self.forecast_skill = ForecastSkill()
         self.shadow = ShadowBattery()
@@ -298,6 +307,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         forecast = stored.get("price_forecast") or {}
         self._forecast_fetched = dt_util.parse_datetime(forecast.get("fetched") or "")
         self._forecast_points = _forecast_from_store(forecast.get("points"))
+        self._forecast_source = forecast.get("source")
         self._tariff = Tariff.from_list(forecast.get("tariff"))
         self.forecast_skill = ForecastSkill.from_dict(stored.get("forecast_skill"))
 
@@ -352,7 +362,11 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             ],
             "price_forecast": {
                 "fetched": self._forecast_fetched.isoformat() if self._forecast_fetched else None,
-                "points": [[p.start.isoformat(), p.end.isoformat(), p.raw] for p in self._forecast_points],
+                "source": self._forecast_source,
+                "points": [
+                    [p.start.isoformat(), p.end.isoformat(), p.raw, p.low, p.high]
+                    for p in self._forecast_points
+                ],
                 "tariff": self._tariff.to_list() if self._tariff else None,
             },
             "forecast_skill": self.forecast_skill.to_dict(),
@@ -527,41 +541,68 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         return periods, PV_SOURCE_SOLCAST + reason
 
     async def _async_fetch_forecast(self, now: datetime) -> None:
-        """Haal de prijsvoorspelling op (elk uur) en leer van eerdere voorspellingen."""
+        """Haal de prijsvoorspelling op (elk uur) en leer van eerdere voorspellingen.
+
+        Eerst jeroen.nl (met 80%-band); lukt dat niet, dan EpexPredictor via de ingestelde URL.
+        """
         if not self._conf(CONF_PRICE_FORECAST):
             return
+        session = async_get_clientsession(self.hass)
+        errors: list[str] = []
+        points: list[ForecastPoint] = []
+        source = ""
+        if self._conf(CONF_PRICE_FORECAST_JEROEN):
+            try:
+                async with (
+                    asyncio.timeout(PRICE_FORECAST_TIMEOUT_SECONDS),
+                    session.post(
+                        JEROEN_MCP_URL,
+                        json=jeroen_request(),
+                        headers={"Accept": "application/json, text/event-stream"},
+                    ) as response,
+                ):
+                    response.raise_for_status()
+                    points = parse_jeroen(await response.json(content_type=None))
+                if not points:
+                    errors.append(f"{JEROEN_SOURCE}: lege of onleesbare voorspelling")
+            except Exception as err:  # noqa: BLE001 - elke fout: door naar de terugval
+                errors.append(f"{JEROEN_SOURCE}: {err}")
+            source = JEROEN_SOURCE
         url = str(self._conf(CONF_PRICE_FORECAST_URL) or "")
-        if not url:
-            return
-        try:
-            session = async_get_clientsession(self.hass)
-            async with asyncio.timeout(PRICE_FORECAST_TIMEOUT_SECONDS), session.get(url) as response:
-                response.raise_for_status()
-                payload = await response.json(content_type=None)
-        except Exception as err:  # noqa: BLE001 - elke fout: gewoon zonder (nieuwe) voorspelling verder
-            if self._forecast_error is None:
-                self._add_log(now, "info", f"prijsvoorspelling niet opgehaald: {err}")
-            self._forecast_error = str(err)
-            return
-        points = parse_epexpredictor(payload)
+        if not points and url:
+            try:
+                async with asyncio.timeout(PRICE_FORECAST_TIMEOUT_SECONDS), session.get(url) as response:
+                    response.raise_for_status()
+                    points = parse_epexpredictor(await response.json(content_type=None))
+                if not points:
+                    errors.append(f"{EPEX_SOURCE}: lege of onleesbare voorspelling")
+            except Exception as err:  # noqa: BLE001 - elke fout: gewoon zonder (nieuwe) voorspelling verder
+                errors.append(f"{EPEX_SOURCE}: {err}")
+            source = EPEX_SOURCE
+        error = "; ".join(errors) or None
+        if error and error != self._forecast_error:
+            self._add_log(now, "info", f"prijsvoorspelling: {error}")
+        self._forecast_error = error
         if not points:
-            self._forecast_error = "lege of onleesbare voorspelling"
             return
-        self._forecast_error = None
         self._forecast_points = points
         self._forecast_fetched = now
+        self._forecast_source = source
         tariff = fit_tariff(self._last_prices, points)
         if tariff is not None:
             self._tariff = tariff
         # Leren: de eerste voorspelling van elke dag bewaren voor wat Zonneplan nog niet kent,
         # en eerdere voorspellingen naast de echte prijzen leggen.
         known_until = max((p.end for p in self._last_prices), default=now)
+        tariff_now = self._tariff or default_tariff()
         hourly = {
             hour: buy
-            for hour, (buy, _ex) in hourly_buy(points, self._tariff or default_tariff(), now.tzinfo).items()
+            for hour, (buy, _ex) in hourly_buy(points, tariff_now, now.tzinfo).items()
             if hour >= known_until
         }
-        self.forecast_skill.record(now, hourly)
+        # jeroen.nl rekent rond 03:00 UTC; vóór 06:00 is het nog de run van gisteren.
+        if now.hour >= 6:
+            self.forecast_skill.record(now, hourly, hourly_band(points, tariff_now, now.tzinfo))
         self.forecast_skill.score(self._last_prices, now.tzinfo)
         await self._store.async_save(self._storage_payload())
 
@@ -574,6 +615,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         self.data.price_forecast = info
         if not info["actief"]:
             return []
+        info["bron"] = self._forecast_source
         info["opgehaald"] = self._forecast_fetched.isoformat() if self._forecast_fetched else None
         info["fout"] = self._forecast_error
         info["per_dag_vooruit"] = self.forecast_skill.summary()
@@ -592,6 +634,27 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         if not blocks:
             return []
         info["tot"] = blocks[-1].end.isoformat()
+        bands = hourly_band(self._forecast_points, tariff, now.tzinfo)
+        per_day: dict[str, list[ForecastBlock]] = {}
+        for block in blocks:
+            per_day.setdefault(block.start.date().isoformat(), []).append(block)
+        days: list[dict[str, Any]] = []
+        for day, group in per_day.items():
+            entry: dict[str, Any] = {
+                "datum": day,
+                "gemiddeld_ct": round(sum(b.buy_raw for b in group) / len(group) * 100, 1),
+                "laagste_ct": round(min(b.buy_raw for b in group) * 100, 1),
+                "hoogste_ct": round(max(b.buy_raw for b in group) * 100, 1),
+                "vertrouwen": group[0].trust,
+            }
+            day_bands = [bands[b.start] for b in group if b.start in bands]
+            if day_bands:
+                entry["band_80pct_ct"] = [
+                    round(sum(lo for lo, _ in day_bands) / len(day_bands) * 100, 1),
+                    round(sum(hi for _, hi in day_bands) / len(day_bands) * 100, 1),
+                ]
+            days.append(entry)
+        info["dagen"] = days
         slots: list[PlanSlot] = []
         for block in blocks:
             if block.start < netting_end:
@@ -968,7 +1031,9 @@ def _forecast_from_store(raw: Any) -> list[ForecastPoint]:
         try:
             start, end = dt_util.parse_datetime(item[0]), dt_util.parse_datetime(item[1])
             if start and end:
-                points.append(ForecastPoint(start, end, float(item[2])))
+                low = float(item[3]) if len(item) > 4 and item[3] is not None else None
+                high = float(item[4]) if len(item) > 4 and item[4] is not None else None
+                points.append(ForecastPoint(start, end, float(item[2]), low, high))
         except (TypeError, ValueError, IndexError):
             continue
     return points

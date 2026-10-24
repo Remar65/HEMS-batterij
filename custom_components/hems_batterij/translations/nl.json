@@ -43,7 +43,8 @@
           "helios_entities": "Helios-verwachtingssensoren (power_now, één per panelenveld)",
           "controlled_batteries": "Batterijen die HEMS stuurt (leeg = alleen meekijken; ook de schakelaar 'HEMS stuurt' moet aan)",
           "price_forecast": "Prijsvoorspelling gebruiken voor de dagen na de bekende prijzen",
-          "price_forecast_url": "Adres prijsvoorspelling (EpexPredictor prices_short)"
+          "price_forecast_jeroen": "jeroen.nl als eerste bron gebruiken (met 80%-band)",
+          "price_forecast_url": "Adres terugval-prijsvoorspelling (EpexPredictor prices_short)"
         }
       }
     }
