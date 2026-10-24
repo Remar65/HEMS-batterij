@@ -23,6 +23,11 @@ Bedoeld voor: **M2 door HEMS, M1 blijft bij HBC.**
   HBC's actieve deelstrategie die met de andere batterij zou wegregelen, bijvoorbeeld
   M2 uit het net laden terwijl HBC op zelfverbruik M1 ontlaadt. HEMS doet dan alleen
   zelfverbruik binnen de grenzen van dat kwartier.
+- **Nu laden (knop).** Schakelaar *Nu laden* laadt de gestuurde batterijen met vol vermogen,
+  ook uit het net, tot het percentage van *Nu laden tot* (standaard 100%, nooit boven de eigen
+  laadgrens van een batterij). Bedoeld voor onverwacht verbruik op een duur moment. Werkt alleen
+  als *HEMS stuurt* aan staat, gaat vanzelf uit zodra het doel bereikt is en blijft niet bewaard
+  over een herstart. Daarna volgt HEMS weer het plan.
 - **Stilzetten.** Schakelaar uit, integratie herladen of HA afsluiten, batterij in alarm of
   zonder verse gegevens: de gestuurde batterij gaat naar `stop`.
 - **Vergelijking blijft.** Tijdens het sturen houdt de schaduwbatterij bij wat HBC met

@@ -25,7 +25,7 @@ from .sensor import device_info
 async def async_setup_entry(
     hass: HomeAssistant, entry: HemsConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    async_add_entities([HemsControlSwitch(entry.runtime_data)])
+    async_add_entities([HemsControlSwitch(entry.runtime_data), HemsForceChargeSwitch(entry.runtime_data)])
 
 
 class HemsControlSwitch(CoordinatorEntity[HemsCoordinator], SwitchEntity, RestoreEntity):
@@ -61,4 +61,37 @@ class HemsControlSwitch(CoordinatorEntity[HemsCoordinator], SwitchEntity, Restor
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.async_set_control(False)
+        self.async_write_ha_state()
+
+
+class HemsForceChargeSwitch(CoordinatorEntity[HemsCoordinator], SwitchEntity):
+    """Knop "Nu laden": de gestuurde batterijen vol vermogen laden, ook uit het net.
+
+    Gaat vanzelf uit zodra het doel (getal "Nu laden tot") bereikt is; daarna volgt
+    HEMS weer het plan. Blijft bewust niet bewaard over een herstart.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "nu_laden"
+    _attr_icon = "mdi:battery-charging-high"
+
+    def __init__(self, coordinator: HemsCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_nu_laden"
+        self._attr_device_info = device_info(coordinator)
+
+    @property
+    def is_on(self) -> bool:
+        return self.coordinator.force_charge
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"laden_tot_pct": self.coordinator.force_charge_target_pct}
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self.coordinator.async_set_force_charge(True)
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self.coordinator.async_set_force_charge(False)
         self.async_write_ha_state()

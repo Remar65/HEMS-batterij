@@ -147,3 +147,20 @@ def test_power_cap_learner_ignores_ramp_and_small_commands():
     learner.observe("m1", 100, 0, t0)
     assert learner.observe("m1", 100, 0, t0 + timedelta(seconds=60)) is None
     assert learner.caps(t0 + timedelta(seconds=60)) == {}
+
+
+def test_force_charge_until_target_then_none():
+    from custom_components.hems_batterij.controller import force_charge_target
+
+    m1 = BatteryState("marstek_m1", 40.0, 5.12, 0.0, 2500, 2500, 12, 100)
+    m2 = BatteryState("marstek_m2", 95.0, 5.12, 0.0, 2500, 2500, 12, 100)
+    target = force_charge_target([m1, m2], 90)
+    assert target is not None
+    assert target.mode == MODE_GRID_CHARGE
+    assert target.fixed_w == -2500  # alleen M1 moet nog, M2 zit al boven 90%
+    assert force_charge_target([m2], 90) is None
+    # Eigen laadgrens van de batterij telt: 100% gevraagd, batterij stopt op 95%.
+    capped = BatteryState("marstek_m2", 95.0, 5.12, 0.0, 2500, 2500, 12, 95)
+    assert force_charge_target([capped], 100) is None
+    alarm = BatteryState("marstek_m1", 40.0, 5.12, 0.0, 2500, 2500, 12, 100, alarms=["te warm"])
+    assert force_charge_target([alarm], 100) is None
