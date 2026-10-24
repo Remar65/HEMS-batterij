@@ -351,5 +351,30 @@ __all__ = [
     "allocate",
     "control_step",
     "desired_total_w",
+    "force_charge_target",
     "safety_reasons",
 ]
+
+
+def force_charge_target(batteries: list[BatteryState], target_pct: float) -> ControlTarget | None:
+    """Handmatig "nu laden": vol vermogen laden, ook uit het net, tot `target_pct`.
+
+    Geeft None als er niets (meer) te laden valt: elke bruikbare batterij zit op het
+    doel of op zijn eigen laadgrens.
+    """
+    todo = [
+        b
+        for b in batteries
+        if b.usable and (b.soc_pct or 0.0) < min(target_pct, b.soc_max_pct) - 0.5
+    ]
+    if not todo:
+        return None
+    power = sum(b.max_charge_w for b in todo)
+    return ControlTarget(
+        mode=MODE_GRID_CHARGE,
+        fixed_w=-power,
+        max_charge_w=power,
+        max_discharge_w=0.0,
+        reason=f"handmatig laden tot {target_pct:.0f}% (knop Nu laden)",
+    )
+

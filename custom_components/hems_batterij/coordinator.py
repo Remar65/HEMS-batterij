@@ -89,6 +89,7 @@ from .controller import (
     ControlTarget,
     PowerCapLearner,
     control_step,
+    force_charge_target,
 )
 from .forecast import (
     LoadProfile,
@@ -256,6 +257,9 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         self._hems_saving_total = 0.0
         # Schakelaar "HEMS stuurt" (switch.py zet dit; standaard uit).
         self.control_enabled = False
+        # Knop "Nu laden": vol laden tot dit percentage, los van het plan (standaard uit).
+        self.force_charge = False
+        self.force_charge_target_pct = 100.0
         self._control_was_active = False
         self._actuators: dict[str, MarstekActuator] = {}
         self._tick_lock = asyncio.Lock()
@@ -294,6 +298,22 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         """Schakelaar "HEMS stuurt" aan of uit."""
         self.control_enabled = enabled
         await self._async_fast_tick(dt_util.now())
+
+    async def async_set_force_charge(self, enabled: bool) -> None:
+        """Knop "Nu laden" aan of uit."""
+        now = dt_util.now()
+        if enabled and not self.control_active:
+            self._add_log(now, "info", "Nu laden kan alleen als HEMS stuurt aan staat")
+            self.force_charge = False
+            self.async_update_listeners()
+            return
+        if enabled != self.force_charge:
+            self.force_charge = enabled
+            what = f"aangezet (tot {self.force_charge_target_pct:.0f}%)" if enabled else "uitgezet"
+            self._add_log(now, "info", f"Nu laden {what}")
+        await self._async_fast_tick(now)
+        if not enabled:
+            await self.async_replan("Nu laden klaar")
 
     # --------------------------------------------------------------- lifecycle
     async def async_start(self) -> None:
@@ -921,6 +941,16 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                     reason=f"niet {verb}: HBC ({sub or 'onbekend'}) zou de andere batterij "
                     f"ertegenin laten werken; {target.reason}",
                 )
+        if self.force_charge:
+            forced = force_charge_target(planned, self.force_charge_target_pct) if active else None
+            if forced is not None:
+                target = forced
+            else:
+                # Doel bereikt (of HEMS stuurt niet meer): knop uit en weer volgens plan.
+                self.force_charge = False
+                reached = "doel bereikt" if active else "HEMS stuurt staat uit"
+                self._add_log(now, "info", f"Nu laden gestopt: {reached}")
+                self.hass.async_create_task(self.async_replan("Nu laden klaar"))
         if active:
             for b in planned:
                 asked = self._last_commanded.get(b.name, 0.0)

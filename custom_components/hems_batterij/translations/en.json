@@ -117,6 +117,14 @@
     "switch": {
       "sturing": {
         "name": "HEMS controls"
+      },
+      "nu_laden": {
+        "name": "Charge now"
+      }
+    },
+    "number": {
+      "nu_laden_tot": {
+        "name": "Charge now up to"
       }
     }
   }

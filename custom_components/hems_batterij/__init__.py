@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant
 
 from .coordinator import HemsCoordinator
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SWITCH]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SWITCH, Platform.NUMBER]
 
 type HemsConfigEntry = ConfigEntry[HemsCoordinator]
 

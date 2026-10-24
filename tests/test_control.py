@@ -83,7 +83,6 @@ async def test_switch_controls_only_m2_and_stops_it_again(hass: HomeAssistant) -
         hass.states.async_set(f"number.{prefix}_forcible_discharge_power", "0")
     hass.states.async_set("input_text.house_battery_strategy_active_sub_strategy", "Self-consumption")
     selects = async_mock_service(hass, "select", "select_option")
-    numbers = async_mock_service(hass, "number", "set_value")
 
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -93,6 +92,8 @@ async def test_switch_controls_only_m2_and_stops_it_again(hass: HomeAssistant) -
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
+    # Pas na de setup: HEMS laadt zelf het number-platform, dat number.set_value registreert.
+    numbers = async_mock_service(hass, "number", "set_value")
     coordinator = entry.runtime_data
 
     # Schakelaar staat standaard uit: alleen meekijken, niets gestuurd.
@@ -232,4 +233,45 @@ async def test_keeps_planning_on_last_known_prices_when_zonneplan_drops(hass: Ho
     payload = coordinator._storage_payload()
     assert _prices_from_store(payload["prices"]) == coordinator._last_prices
     assert _prices_from_store([["kapot"]]) == []
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_force_charge_switch_charges_and_needs_control(hass: HomeAssistant) -> None:
+    """Knop Nu laden: alleen als HEMS stuurt; dan laadt M2 vol vermogen, ook uit het net."""
+    _set_states(hass)
+    for prefix in ("marstek_m1", "marstek_m2"):
+        hass.states.async_set(f"select.{prefix}_forcible_charge_discharge", "stop")
+        hass.states.async_set(f"number.{prefix}_forcible_charge_power", "0")
+        hass.states.async_set(f"number.{prefix}_forcible_discharge_power", "0")
+    async_mock_service(hass, "select", "select_option")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"batteries": "marstek_m1, marstek_m2"},
+        options={"controlled_batteries": ["marstek_m2"]},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    async_mock_service(hass, "number", "set_value")
+    coordinator = entry.runtime_data
+    reg = er.async_get(hass)
+    force_id = reg.async_get_entity_id("switch", DOMAIN, f"{entry.entry_id}_nu_laden")
+    target_id = reg.async_get_entity_id("number", DOMAIN, f"{entry.entry_id}_nu_laden_tot")
+    assert hass.states.get(force_id).state == "off"
+    assert float(hass.states.get(target_id).state) == 100
+
+    # HEMS stuurt staat uit: de knop springt terug.
+    await hass.services.async_call("switch", "turn_on", {"entity_id": force_id}, blocking=True)
+    assert coordinator.force_charge is False
+
+    await coordinator.async_set_control(True)
+    await hass.services.async_call("switch", "turn_on", {"entity_id": force_id}, blocking=True)
+    assert coordinator.force_charge is True
+    assert coordinator.data.commands["marstek_m2"].mode == "charge"
+    assert "marstek_m1" not in coordinator.data.commands
+
+    # Doel lager dan de huidige stand: knop gaat vanzelf uit.
+    coordinator.force_charge_target_pct = 20
+    await coordinator._async_fast_tick(None)
+    assert coordinator.force_charge is False
     assert await hass.config_entries.async_unload(entry.entry_id)
