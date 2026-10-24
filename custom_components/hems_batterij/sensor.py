@@ -152,6 +152,7 @@ SENSORS: tuple[HemsSensorDescription, ...] = (
             "zonbron": d.pv_source,
             "prijsbron": d.price_source,
             "prijsvoorspelling": d.price_forecast,
+            "verwarming": d.heat_forecast,
         },
     ),
     HemsSensorDescription(

@@ -81,6 +81,16 @@ binnen de band viel (`binnen_band_pct`, hoort rond 80% te liggen). De band stuur
 niet: eerst meten of hij klopt. Plan-stappen op voorspelde prijzen hebben `voorspeld: true`.
 Beide bronnen zijn uit te zetten in de opties.
 
+**Verwarming uit het weer (v0.4.1).** Het huisprofiel leert het verbruik *zonder* verwarming;
+de stroom voor verwarming (`sensor.warmtepomp_vermogen_verwarming`) leert HEMS apart. Per dag
+bewaart het de kWh verwarming naast de gemiddelde buitentemperatuur (uurtemperatuur van
+Open-Meteo voor de locatie van Home Assistant, elk uur opgehaald). Een lijn door die dagen (kouder
+= meer kWh) geeft de verwachte kWh voor elke dag in de weersverwachting, verdeeld over de uren
+volgens het geleerde patroon (apart voor koude en zachte dagen; de vloerbuffer stookt nu vooral
+op goedkope uren, dat komt vanzelf mee). Met minder dan 7 dagen, of minder dan 3 stookdagen,
+telt het gemeten daggemiddelde. Attribuut `verwarming` op *Verwachte besparing plan* toont de
+lijn en per dag de buitentemperatuur en verwachte kWh. Uit te zetten in de opties.
+
 Elk kwartier krijgt een modus met een leesbare reden:
 
 | Modus | Betekenis |
