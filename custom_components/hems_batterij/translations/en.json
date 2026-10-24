@@ -44,6 +44,8 @@
           "controlled_batteries": "Batteries HEMS controls (empty = observe only; also needs the 'HEMS controls' switch)",
           "price_forecast": "Use price forecast for the days after the known prices",
           "price_forecast_jeroen": "Use jeroen.nl as the first forecast source (with 80% band)",
+          "heat_forecast": "Predict heating electricity from the weather forecast",
+          "heat_power": "Heat pump power while heating (W)",
           "price_forecast_url": "Fallback price forecast URL (EpexPredictor prices_short)"
         }
       }

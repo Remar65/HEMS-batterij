@@ -180,6 +180,14 @@ async def test_price_forecast_prefers_jeroen_and_falls_back(hass: HomeAssistant,
     aioclient_mock.post(JEROEN_MCP_URL, json=_jeroen_answer(start))
     epex_url = DEFAULTS["price_forecast_url"]
     aioclient_mock.get(epex_url, json={"s": [], "t": []})
+    from custom_components.hems_batterij.const import OPEN_METEO_URL
+
+    weather_url = OPEN_METEO_URL.format(lat=hass.config.latitude, lon=hass.config.longitude)
+    first = int(dt_util.as_timestamp(start)) - 2 * 86400
+    aioclient_mock.get(
+        weather_url,
+        json={"hourly": {"time": [first + 3600 * i for i in range(240)], "temperature_2m": [4.0] * 240}},
+    )
 
     entry = MockConfigEntry(domain=DOMAIN, data={"batteries": "marstek_m1, marstek_m2"})
     entry.add_to_hass(hass)
@@ -194,6 +202,9 @@ async def test_price_forecast_prefers_jeroen_and_falls_back(hass: HomeAssistant,
     assert info["dagen"] and "band_80pct_ct" in info["dagen"][0]
     assert all(p.low is not None for p in coordinator._forecast_points if p.raw == 0.15)
     assert not any(call[1].host == "epexpredictor.batzill.com" for call in aioclient_mock.mock_calls)
+    heat = coordinator.data.heat_forecast
+    assert heat["actief"] and heat["fout"] is None
+    assert heat["per_dag"] and heat["per_dag"][0]["buiten_gem"] == 4.0
 
     # jeroen.nl valt uit: dan EpexPredictor.
     aioclient_mock.clear_requests()

@@ -39,6 +39,8 @@ CONF_FEED_IN_COST_CT = "feed_in_cost_ct"
 CONF_PRICE_FORECAST = "price_forecast"
 CONF_PRICE_FORECAST_URL = "price_forecast_url"
 CONF_PRICE_FORECAST_JEROEN = "price_forecast_jeroen"
+CONF_HEAT_FORECAST = "heat_forecast"
+CONF_HEAT_POWER = "heat_power"
 
 DEFAULTS = {
     CONF_P1_POWER: "sensor.p1_meter_power",
@@ -73,6 +75,10 @@ DEFAULTS = {
     # "jeroen.nl + leren"). jeroen.nl eerst; lukt dat niet, dan EpexPredictor (de URL).
     CONF_PRICE_FORECAST: True,
     CONF_PRICE_FORECAST_JEROEN: True,
+    # Stroom voor verwarming apart voorspellen uit de weersverwachting (Marco, 24 okt 2026).
+    # Het vermogen is de template-sensor "WP-vermogen terwijl circuit 0 HEATING is".
+    CONF_HEAT_FORECAST: True,
+    CONF_HEAT_POWER: "sensor.warmtepomp_vermogen_verwarming",
     CONF_PRICE_FORECAST_URL: "https://epexpredictor.batzill.com/prices_short?region=NL&unit=EUR_PER_KWH&hours=168",
     # Batterijen die HEMS zelf aanstuurt (leeg = alleen meekijken). Marco, 17 okt 2026:
     # eerst alleen de M2; de M1 blijft bij HBC.
@@ -150,6 +156,12 @@ PRICE_FORECAST_TIMEOUT_SECONDS = 20
 # Publieke MCP-server van jeroen.nl: gratis voor eigen domotica, max 60 aanroepen per uur
 # per IP-adres (https://jeroen.nl/api-voorwaarden). Wij vragen één keer per uur.
 JEROEN_MCP_URL = "https://jeroen.nl/mcp"
+# Uurtemperatuur (gisteren t/m 7 dagen vooruit) voor de locatie van Home Assistant.
+# Gratis voor niet-commercieel gebruik; wij vragen één keer per uur.
+OPEN_METEO_URL = (
+    "https://api.open-meteo.com/v1/forecast?latitude={lat:.3f}&longitude={lon:.3f}"
+    "&hourly=temperature_2m&past_days=2&forecast_days=8&timezone=GMT&timeformat=unixtime"
+)
 DECISION_LOG_SIZE = 50
 
 STORAGE_VERSION = 1

@@ -40,6 +40,8 @@ from .const import (
     CONF_DEFAULT_EFFICIENCY,
     CONF_DEFAULT_LOAD_W,
     CONF_FEED_IN_COST_CT,
+    CONF_HEAT_FORECAST,
+    CONF_HEAT_POWER,
     CONF_HELIOS_ENTITIES,
     CONF_INVESTMENT_EUR,
     CONF_NETTING_ACTIVE,
@@ -68,6 +70,7 @@ from .const import (
     HBC_SELL_TARGET_SOC_ENTITY,
     HBC_SUB_STRATEGY_ENTITY,
     JEROEN_MCP_URL,
+    OPEN_METEO_URL,
     PLAN_STEP_KWH,
     PRICE_FORECAST_MAX_AGE_HOURS,
     PRICE_FORECAST_TIMEOUT_SECONDS,
@@ -94,6 +97,7 @@ from .forecast import (
     parse_solcast_detailed,
     pv_kwh_between,
 )
+from .heat import HeatModel, daily_means, parse_open_meteo
 from .planner import (
     MODE_GRID_CHARGE,
     MODE_SAFETY,
@@ -167,6 +171,7 @@ class HemsData:
     pv_source: str | None = None
     price_source: str | None = None
     price_forecast: dict[str, Any] = field(default_factory=dict)
+    heat_forecast: dict[str, Any] = field(default_factory=dict)
     control_active: bool = False
     controlled: list[str] = field(default_factory=list)
     commands: dict[str, Command] = field(default_factory=dict)
@@ -231,6 +236,17 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         self._forecast_source: str | None = None
         self._tariff: Tariff | None = None
         self.forecast_skill = ForecastSkill()
+        # Verwarming apart: kWh per dag tegen de buitentemperatuur, en per uur van de dag.
+        self.heat_model = HeatModel()
+        self._temps: dict[datetime, float] = {}
+        self._weather_fetched: datetime | None = None
+        self._weather_error: str | None = None
+        self._heat_day: date | None = None
+        self._heat_hourly = [0.0] * 24
+        self._heat_seconds = 0.0
+        self._heat_days: dict[date, float] = {}
+        self._heat_line: tuple[float, float] | None = None
+        self._heat_tz: Any = None
         self.shadow = ShadowBattery()
         self._shadow_cost_today = 0.0
         self._shadow_saving_total = 0.0
@@ -310,6 +326,15 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         self._forecast_source = forecast.get("source")
         self._tariff = Tariff.from_list(forecast.get("tariff"))
         self.forecast_skill = ForecastSkill.from_dict(stored.get("forecast_skill"))
+        heat = stored.get("heat") or {}
+        self.heat_model = HeatModel.from_dict(heat.get("model"))
+        self._temps = _temps_from_store(heat.get("temps"))
+        self._weather_fetched = dt_util.parse_datetime(heat.get("fetched") or "")
+        self._heat_day = _date_or_none(heat.get("day"))
+        hourly = heat.get("hourly")
+        if isinstance(hourly, list) and len(hourly) == 24:
+            self._heat_hourly = [float(x) for x in hourly]
+        self._heat_seconds = float(heat.get("seconds") or 0.0)
 
         self._unsubs.append(
             async_track_time_interval(self.hass, self._async_fast_tick, timedelta(seconds=FAST_LOOP_SECONDS))
@@ -370,6 +395,14 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                 "tariff": self._tariff.to_list() if self._tariff else None,
             },
             "forecast_skill": self.forecast_skill.to_dict(),
+            "heat": {
+                "model": self.heat_model.to_dict(),
+                "temps": [[int(t.timestamp()), v] for t, v in sorted(self._temps.items())],
+                "fetched": self._weather_fetched.isoformat() if self._weather_fetched else None,
+                "day": self._heat_day.isoformat() if self._heat_day else None,
+                "hourly": [round(x, 4) for x in self._heat_hourly],
+                "seconds": self._heat_seconds,
+            },
         }
 
     # ------------------------------------------------------------- read state
@@ -540,11 +573,37 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             periods.extend(parse_solcast_detailed(state.attributes if state else None, field_name))
         return periods, PV_SOURCE_SOLCAST + reason
 
+    async def _async_fetch_weather(self, now: datetime) -> None:
+        """Uurtemperatuur ophalen (elk uur) voor de verwachte stroom voor verwarming."""
+        if not self._conf(CONF_HEAT_FORECAST):
+            return
+        url = OPEN_METEO_URL.format(lat=self.hass.config.latitude, lon=self.hass.config.longitude)
+        try:
+            session = async_get_clientsession(self.hass)
+            async with asyncio.timeout(PRICE_FORECAST_TIMEOUT_SECONDS), session.get(url) as response:
+                response.raise_for_status()
+                temps = parse_open_meteo(await response.json(content_type=None))
+        except Exception as err:  # noqa: BLE001 - zonder nieuw weer gewoon verder met het oude
+            if self._weather_error is None:
+                self._add_log(now, "info", f"weersverwachting niet opgehaald: {err}")
+            self._weather_error = str(err)
+            return
+        if not temps:
+            self._weather_error = "lege of onleesbare weersverwachting"
+            return
+        self._weather_error = None
+        self._weather_fetched = now
+        # Bewaren wat we hadden (voor het daggemiddelde van gisteren) plus het nieuwe.
+        horizon = now - timedelta(days=3)
+        self._temps = {t: v for t, v in self._temps.items() if t >= horizon}
+        self._temps.update(temps)
+
     async def _async_fetch_forecast(self, now: datetime) -> None:
         """Haal de prijsvoorspelling op (elk uur) en leer van eerdere voorspellingen.
 
         Eerst jeroen.nl (met 80%-band); lukt dat niet, dan EpexPredictor via de ingestelde URL.
         """
+        await self._async_fetch_weather(now)
         if not self._conf(CONF_PRICE_FORECAST):
             return
         session = async_get_clientsession(self.hass)
@@ -605,6 +664,42 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             self.forecast_skill.record(now, hourly, hourly_band(points, tariff_now, now.tzinfo))
         self.forecast_skill.score(self._last_prices, now.tzinfo)
         await self._store.async_save(self._storage_payload())
+
+    def _prepare_heat(self, now: datetime) -> None:
+        """Daggemiddelden en de geleerde lijn klaarzetten voor _load_kwh (één keer per plan)."""
+        info: dict[str, Any] = {"actief": bool(self._conf(CONF_HEAT_FORECAST))}
+        self.data.heat_forecast = info
+        self._heat_days = {}
+        self._heat_line = None
+        if not info["actief"]:
+            return
+        info.update(self.heat_model.summary())
+        info["weer_opgehaald"] = self._weather_fetched.isoformat() if self._weather_fetched else None
+        info["fout"] = self._weather_error
+        fresh = (
+            self._weather_fetched is not None
+            and (now - self._weather_fetched).total_seconds() <= PRICE_FORECAST_MAX_AGE_HOURS * 3600
+        )
+        if not fresh:
+            return
+        tz = self._heat_tz = now.tzinfo
+        self._heat_days = {d: t for d, t in daily_means(self._temps, tz).items() if d >= now.date()}
+        self._heat_line = self.heat_model.fit()
+        info["per_dag"] = [
+            {
+                "datum": d.isoformat(),
+                "buiten_gem": round(t, 1),
+                "verwarming_kwh": round(self.heat_model.day_kwh(t, self._heat_line), 1),
+            }
+            for d, t in sorted(self._heat_days.items())
+        ]
+
+    def _load_kwh(self, start: datetime, end: datetime) -> float:
+        """Verwacht huisverbruik: het profiel (zonder verwarming) plus verwachte verwarming."""
+        load = self.profile.kwh_between(start, end)
+        if self._heat_days and self._conf(CONF_HEAT_FORECAST):
+            load += self.heat_model.kwh_between(start, end, self._heat_days, self._heat_tz, self._heat_line)
+        return load
 
     def _forecast_slots(
         self, prices: list[PriceSlot], now: datetime, netting_end: datetime, feed_in_cost: float,
@@ -668,7 +763,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                     buy=block.buy,
                     sell=sell,
                     pv_kwh=pv_kwh_between(pv_periods, block.start, block.end),
-                    load_kwh=self.profile.kwh_between(block.start, block.end),
+                    load_kwh=self._load_kwh(block.start, block.end),
                     forecast=True,
                 )
             )
@@ -699,6 +794,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             return
 
         pv_periods, self.data.pv_source = self._pv_periods(now)
+        self._prepare_heat(now)
 
         # Tijdens saldering is terugleveren evenveel waard als afnemen; daarna (of als
         # die optie uit staat, bijvoorbeeld bij een jaaroverschot) de kale prijs.
@@ -721,7 +817,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                     buy=price.buy,
                     sell=sell,
                     pv_kwh=pv_kwh_between(pv_periods, start, end),
-                    load_kwh=self.profile.kwh_between(start, end),
+                    load_kwh=self._load_kwh(start, end),
                 )
             )
         slots.extend(self._forecast_slots(prices, now, netting_end, feed_in_cost, pv_periods))
@@ -985,6 +1081,11 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                     self._shadow_saving_total += baseline - shadow
                     self._hems_saving_total += baseline - (actual if hems_is_real else shadow)
 
+        heat_w = self._learn_heat(now, dt)
+        if house_w is not None and heat_w is not None:
+            # Het profiel leert het verbruik zonder verwarming; die komt uit het weermodel.
+            house_w = max(0.0, house_w - heat_w)
+
         quarter = now.replace(minute=(now.minute // 15) * 15, second=0, microsecond=0)
         if self._quarter_start is None:
             self._quarter_start = quarter
@@ -1000,6 +1101,31 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         if house_w is not None and dt:
             self._quarter_energy_wh += house_w * dt / 3600.0
             self._quarter_seconds += dt
+
+    def _learn_heat(self, now: datetime, dt: float) -> float | None:
+        """Stroom voor verwarming per uur optellen; bij een nieuwe dag de vorige leren.
+
+        Geeft het huidige vermogen voor verwarming (W), of None als dat niet meetelt.
+        """
+        if not self._conf(CONF_HEAT_FORECAST):
+            return None
+        today = now.date()
+        if self._heat_day != today:
+            if self._heat_day is not None and self._heat_seconds >= 20 * 3600:
+                mean = daily_means(self._temps, now.tzinfo).get(self._heat_day)
+                if mean is not None:
+                    self.heat_model.add_day(self._heat_day, sum(self._heat_hourly), mean, self._heat_hourly)
+                    self._store.async_delay_save(self._storage_payload, 60)
+            self._heat_day = today
+            self._heat_hourly = [0.0] * 24
+            self._heat_seconds = 0.0
+        heat_w = _float_state(self._state(self._conf(CONF_HEAT_POWER)))
+        if heat_w is None or heat_w < 0:
+            return None
+        if dt:
+            self._heat_hourly[now.hour] += heat_w * dt / 3_600_000.0
+            self._heat_seconds += dt
+        return heat_w
 
     def _add_log(self, now: datetime, mode: str, reason: str, **extra: Any) -> None:
         entry = {"tijd": now.isoformat(timespec="seconds"), "modus": mode, "reden": reason}
@@ -1037,3 +1163,20 @@ def _forecast_from_store(raw: Any) -> list[ForecastPoint]:
         except (TypeError, ValueError, IndexError):
             continue
     return points
+
+
+def _temps_from_store(raw: Any) -> dict[datetime, float]:
+    temps: dict[datetime, float] = {}
+    for item in raw or []:
+        try:
+            temps[datetime.fromtimestamp(int(item[0]), tz=dt_util.UTC)] = float(item[1])
+        except (TypeError, ValueError, IndexError, OverflowError):
+            continue
+    return temps
+
+
+def _date_or_none(raw: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(raw)) if raw else None
+    except ValueError:
+        return None
