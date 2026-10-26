@@ -28,6 +28,12 @@ Bedoeld voor: **M2 door HEMS, M1 blijft bij HBC.**
   laadgrens van een batterij). Bedoeld voor onverwacht verbruik op een duur moment. Werkt alleen
   als *HEMS stuurt* aan staat, gaat vanzelf uit zodra het doel bereikt is en blijft niet bewaard
   over een herstart. Daarna volgt HEMS weer het plan.
+- **Warm water uit het net.** Maakt de warmtepomp warm water (`sensor.warmtepomp_vermogen_warm_water`
+  boven 300 W), dan dekt de batterij die piek niet zolang het plan later nog wil ontladen tegen een
+  prijs die minstens de handelsmarge hoger is. Die run zit niet in het huisprofiel, dus de planner
+  heeft hem niet ingepland; zonder deze regel is de energie weg voor de dure uren. De batterij blijft
+  wel het gewone verbruik dekken en zon-overschot opslaan, en gaat nooit uit het net laden. Uit te
+  zetten in de opties (*Warm water uit het net als de batterij later meer opbrengt*).
 - **Stilzetten.** Schakelaar uit, integratie herladen of HA afsluiten, batterij in alarm of
   zonder verse gegevens: de gestuurde batterij gaat naar `stop`.
 - **Vergelijking blijft.** Tijdens het sturen houdt de schaduwbatterij bij wat HBC met

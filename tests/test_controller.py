@@ -4,12 +4,15 @@ from custom_components.hems_batterij.controller import (
     ControlTarget,
     allocate,
     control_step,
+    desired_total_w,
+    dhw_exclusion_w,
 )
 from custom_components.hems_batterij.planner import (
     MODE_GRID_CHARGE,
     MODE_HOLD,
     MODE_SAFETY,
     MODE_SELF_CONSUMPTION,
+    MODE_SELL,
 )
 
 SETTINGS = ControllerSettings(smoothing=0.0)
@@ -164,3 +167,29 @@ def test_force_charge_until_target_then_none():
     assert force_charge_target([capped], 100) is None
     alarm = BatteryState("marstek_m1", 40.0, 5.12, 0.0, 2500, 2500, 12, 100, alarms=["te warm"])
     assert force_charge_target([alarm], 100) is None
+
+
+def test_dhw_exclusion_only_when_later_is_better():
+    cheap, margin = 0.15, 0.03
+    # Warm water loopt en het plan wil later voor 0,45 ontladen: uit het net halen.
+    assert dhw_exclusion_w(1800.0, MODE_SELF_CONSUMPTION, cheap, 0.45, margin) == 1800.0
+    assert dhw_exclusion_w(1800.0, MODE_HOLD, cheap, 0.45, margin) == 1800.0
+    # Later nauwelijks duurder, geen run, of het plan heeft een vaste opdracht: niets doen.
+    assert dhw_exclusion_w(1800.0, MODE_SELF_CONSUMPTION, cheap, 0.17, margin) == 0.0
+    assert dhw_exclusion_w(1800.0, MODE_SELF_CONSUMPTION, cheap, None, margin) == 0.0
+    assert dhw_exclusion_w(100.0, MODE_SELF_CONSUMPTION, cheap, 0.45, margin) == 0.0
+    assert dhw_exclusion_w(None, MODE_SELF_CONSUMPTION, cheap, 0.45, margin) == 0.0
+    assert dhw_exclusion_w(1800.0, MODE_SELL, cheap, 0.45, margin) == 0.0
+
+
+def test_excluded_load_comes_from_the_grid_but_never_charges():
+    settings = ControllerSettings(smoothing=0.0)
+    # Huis vraagt 2000 W, waarvan 1800 W warm water: batterij dekt alleen de rest.
+    target = ControlTarget(
+        mode=MODE_SELF_CONSUMPTION, max_charge_w=2500.0, max_discharge_w=2500.0, exclude_load_w=1800.0
+    )
+    assert desired_total_w(target, 2000.0, 0.0, None, settings) == 200.0
+    # Niet omslaan naar laden als de run groter is dan de vraag.
+    assert desired_total_w(target, 500.0, 0.0, None, settings) == 0.0
+    # Zon-overschot blijft gewoon de batterij in.
+    assert desired_total_w(target, -1000.0, 0.0, None, settings) == -1000.0

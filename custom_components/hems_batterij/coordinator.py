@@ -39,6 +39,8 @@ from .const import (
     CONF_CONTROLLED,
     CONF_DEFAULT_EFFICIENCY,
     CONF_DEFAULT_LOAD_W,
+    CONF_DHW_POWER,
+    CONF_DHW_RESERVE,
     CONF_FEED_IN_COST_CT,
     CONF_HEAT_FORECAST,
     CONF_HEAT_POWER,
@@ -89,6 +91,7 @@ from .controller import (
     ControlTarget,
     PowerCapLearner,
     control_step,
+    dhw_exclusion_w,
     force_charge_target,
 )
 from .forecast import (
@@ -181,6 +184,9 @@ class HemsData:
     hems_saving_total_eur: float = 0.0
 
 
+# Minder dan dit (kWh per kwartier) telt niet als gepland ontladen.
+_MIN_PLANNED_DISCHARGE_KWH = 0.03
+
 def _target(step: PlanStep | None) -> ControlTarget | None:
     if step is None:
         return None
@@ -260,6 +266,8 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         # Knop "Nu laden": vol laden tot dit percentage, los van het plan (standaard uit).
         self.force_charge = False
         self.force_charge_target_pct = 100.0
+        # Loopt er nu een warmwaterrun die we uit het net laten komen?
+        self._dhw_from_grid = False
         self._control_was_active = False
         self._actuators: dict[str, MarstekActuator] = {}
         self._tick_lock = asyncio.Lock()
@@ -941,6 +949,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                     reason=f"niet {verb}: HBC ({sub or 'onbekend'}) zou de andere batterij "
                     f"ertegenin laten werken; {target.reason}",
                 )
+        target = self._with_dhw_reserve(target, now)
         if self.force_charge:
             forced = force_charge_target(planned, self.force_charge_target_pct) if active else None
             if forced is not None:
@@ -1051,6 +1060,44 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         data.control_errors = errors
         data.other_battery_w = others_w if active else None
         self.async_set_updated_data(data)
+
+    def _best_later_buy(self, now: datetime) -> float | None:
+        """Hoogste prijs waarop het plan hierna nog wil ontladen (€/kWh)."""
+        if self._plan is None:
+            return None
+        prices = [
+            s.buy
+            for s in self._plan.steps
+            if s.start > now and s.battery_ac_kwh > _MIN_PLANNED_DISCHARGE_KWH
+        ]
+        return max(prices) if prices else None
+
+    def _with_dhw_reserve(self, target: ControlTarget | None, now: datetime) -> ControlTarget | None:
+        """Warm water maken uit het net halen zolang de batterij later meer opbrengt."""
+        if target is None or not self._conf(CONF_DHW_RESERVE):
+            return target
+        dhw_w = _float_state(self._state(self._conf(CONF_DHW_POWER)))
+        step = self._plan.step_at(now) if self._plan else None
+        watt = dhw_exclusion_w(
+            dhw_w,
+            target.mode,
+            step.buy if step else 0.0,
+            self._best_later_buy(now),
+            float(self._conf(CONF_TRADE_MARGIN_CT)) / 100.0,
+        )
+        if watt <= 0:
+            if self._dhw_from_grid:
+                self._dhw_from_grid = False
+                self._add_log(now, target.mode, "warmwaterrun voorbij; weer gewoon zelfverbruik")
+            return target
+        if not self._dhw_from_grid:
+            self._dhw_from_grid = True
+            self._add_log(now, target.mode, f"warm water ({watt:.0f} W) uit het net; batterij bewaren")
+        return replace(
+            target,
+            exclude_load_w=watt,
+            reason=f"{target.reason}; warm water ({watt:.0f} W) uit het net, batterij bewaren voor later",
+        )
 
     async def _async_control_changed(self, now: datetime, active: bool) -> None:
         """Overgang tussen meekijken en sturen: schaduw en vergelijking opnieuw beginnen."""
