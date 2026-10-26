@@ -275,3 +275,75 @@ async def test_force_charge_switch_charges_and_needs_control(hass: HomeAssistant
     await coordinator._async_fast_tick(None)
     assert coordinator.force_charge is False
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_hot_water_run_comes_from_the_grid_not_the_battery(hass: HomeAssistant) -> None:
+    """26 okt 15:00: warm water maken (1,8 kW) trok de batterij leeg voor de piek van 44 ct."""
+    _set_states(hass)
+    hass.states.async_set("sensor.p1_meter_power", "2000")
+    hass.states.async_set("sensor.kwh_meter_power", "0")
+    hass.states.async_set("sensor.kwh_meter_power_2", "0")
+    for prefix in ("marstek_m1", "marstek_m2"):
+        hass.states.async_set(f"select.{prefix}_forcible_charge_discharge", "stop")
+        hass.states.async_set(f"number.{prefix}_forcible_charge_power", "0")
+        hass.states.async_set(f"number.{prefix}_forcible_discharge_power", "0")
+    async_mock_service(hass, "select", "select_option")
+    async_mock_service(hass, "number", "set_value")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"batteries": "marstek_m1, marstek_m2"},
+        options={"controlled_batteries": ["marstek_m1", "marstek_m2"]},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data
+    await coordinator.async_set_control(True)
+
+    now = dt_util.now()
+
+    def step(minutes: int, buy: float, kwh: float, mode: str = MODE_SELF_CONSUMPTION) -> PlanStep:
+        start = now + timedelta(minutes=minutes)
+        return PlanStep(
+            start=start,
+            end=start + timedelta(minutes=15),
+            buy=buy,
+            sell=buy,
+            pv_kwh=0.0,
+            load_kwh=0.1,
+            soc_start_kwh=5.0,
+            soc_end_kwh=5.0,
+            battery_ac_kwh=kwh,
+            grid_kwh=0.0,
+            cost_eur=0.0,
+            baseline_cost_eur=0.0,
+            mode=mode,
+            max_charge_w=5000.0,
+            max_discharge_w=5000.0,
+            reason="zelfverbruik",
+        )
+
+    # Nu zelfverbruik bij 32 ct, straks verkopen bij 44 ct.
+    coordinator._plan = Plan(
+        created=now, steps=[step(-1, 0.324, 0.0), step(150, 0.441, 1.17, MODE_SELL)]
+    )
+
+    # Zonder warmwaterrun dekt de batterij de hele 2000 W.
+    await coordinator._async_fast_tick(None)
+    assert coordinator.data.result.total_w == 2000
+
+    # Met de run blijft 1800 W uit het net komen; alleen de rest uit de batterij.
+    # De regellus stuurt geleidelijk bij, dus een paar rondes.
+    hass.states.async_set("sensor.warmtepomp_vermogen_warm_water", "1800")
+    for _ in range(8):
+        await coordinator._async_fast_tick(None)
+    assert abs(coordinator.data.result.total_w - 200) < 30
+    assert "warm water" in coordinator.data.result.reason
+
+    # Loont niet meer (straks even duur als nu): gewoon zelfverbruik.
+    coordinator._plan = Plan(created=now, steps=[step(-1, 0.324, 0.0), step(150, 0.33, 1.17, MODE_SELL)])
+    for _ in range(12):
+        await coordinator._async_fast_tick(None)
+    assert abs(coordinator.data.result.total_w - 2000) < 30
+    assert "warm water" not in coordinator.data.result.reason
+    assert await hass.config_entries.async_unload(entry.entry_id)

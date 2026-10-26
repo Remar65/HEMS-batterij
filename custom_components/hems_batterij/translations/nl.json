@@ -46,6 +46,8 @@
           "price_forecast_jeroen": "jeroen.nl als eerste bron gebruiken (met 80%-band)",
           "heat_forecast": "Stroom voor verwarming voorspellen uit de weersverwachting",
           "heat_power": "Vermogen warmtepomp tijdens verwarmen (W)",
+          "dhw_reserve": "Warm water uit het net als de batterij later meer opbrengt",
+          "dhw_power": "Vermogen warmtepomp tijdens warm water maken (W)",
           "price_forecast_url": "Adres terugval-prijsvoorspelling (EpexPredictor prices_short)"
         }
       }

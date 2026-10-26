@@ -41,6 +41,8 @@ CONF_PRICE_FORECAST_URL = "price_forecast_url"
 CONF_PRICE_FORECAST_JEROEN = "price_forecast_jeroen"
 CONF_HEAT_FORECAST = "heat_forecast"
 CONF_HEAT_POWER = "heat_power"
+CONF_DHW_POWER = "dhw_power"
+CONF_DHW_RESERVE = "dhw_reserve"
 
 DEFAULTS = {
     CONF_P1_POWER: "sensor.p1_meter_power",
@@ -79,6 +81,8 @@ DEFAULTS = {
     # Het vermogen is de template-sensor "WP-vermogen terwijl circuit 0 HEATING is".
     CONF_HEAT_FORECAST: True,
     CONF_HEAT_POWER: "sensor.warmtepomp_vermogen_verwarming",
+    CONF_DHW_POWER: "sensor.warmtepomp_vermogen_warm_water",
+    CONF_DHW_RESERVE: True,
     CONF_PRICE_FORECAST_URL: "https://epexpredictor.batzill.com/prices_short?region=NL&unit=EUR_PER_KWH&hours=168",
     # Batterijen die HEMS zelf aanstuurt (leeg = alleen meekijken). Marco, 17 okt 2026:
     # eerst alleen de M2; de M1 blijft bij HBC.

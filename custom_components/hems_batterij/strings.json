@@ -46,6 +46,8 @@
           "price_forecast_jeroen": "Use jeroen.nl as the first forecast source (with 80% band)",
           "heat_forecast": "Predict heating electricity from the weather forecast",
           "heat_power": "Heat pump power while heating (W)",
+          "dhw_reserve": "Take hot water from the grid when the battery is worth more later",
+          "dhw_power": "Heat pump power while making hot water (W)",
           "price_forecast_url": "Fallback price forecast URL (EpexPredictor prices_short)"
         }
       }

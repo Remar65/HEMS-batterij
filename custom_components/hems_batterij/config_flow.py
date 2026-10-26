@@ -14,6 +14,8 @@ from .const import (
     CONF_CONTROLLED,
     CONF_DEFAULT_EFFICIENCY,
     CONF_DEFAULT_LOAD_W,
+    CONF_DHW_POWER,
+    CONF_DHW_RESERVE,
     CONF_FEED_IN_COST_CT,
     CONF_HEAT_FORECAST,
     CONF_HEAT_POWER,
@@ -135,6 +137,8 @@ class HemsOptionsFlow(OptionsFlow):
                 vol.Required(CONF_PRICE_FORECAST, default=current[CONF_PRICE_FORECAST]): bool,
                 vol.Required(CONF_HEAT_FORECAST, default=current[CONF_HEAT_FORECAST]): bool,
                 vol.Required(CONF_HEAT_POWER, default=current[CONF_HEAT_POWER]): str,
+                vol.Required(CONF_DHW_RESERVE, default=current[CONF_DHW_RESERVE]): bool,
+                vol.Required(CONF_DHW_POWER, default=current[CONF_DHW_POWER]): str,
                 vol.Required(CONF_PRICE_FORECAST_JEROEN, default=current[CONF_PRICE_FORECAST_JEROEN]): bool,
                 vol.Required(CONF_PRICE_FORECAST_URL, default=current[CONF_PRICE_FORECAST_URL]): str,
                 vol.Required(CONF_PV_SOURCE, default=current[CONF_PV_SOURCE]): vol.In(

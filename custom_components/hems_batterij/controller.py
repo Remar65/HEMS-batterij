@@ -15,10 +15,14 @@ from datetime import datetime, timedelta
 
 from .planner import (
     MODE_GRID_CHARGE,
+    MODE_HOLD,
     MODE_SAFETY,
     MODE_SELF_CONSUMPTION,
     MODE_SELL,
 )
+
+# Onder dit vermogen is een warmwaterrun niet de moeite om voor opzij te zetten.
+MIN_DHW_W = 300.0
 
 
 @dataclass
@@ -67,6 +71,7 @@ class ControlTarget:
     max_charge_w: float = 0.0
     max_discharge_w: float = 0.0
     reason: str = ""
+    exclude_load_w: float = 0.0  # dit deel van de vraag laten we uit het net komen
 
 
 @dataclass
@@ -117,6 +122,10 @@ def desired_total_w(
         if other_active:
             error *= settings.other_share
         raw = battery_total_w + error
+        if target.exclude_load_w > 0 and raw > 0:
+            # Een grote, ongeplande vraag (warm water maken) niet uit de batterij dekken:
+            # die energie is later meer waard. Nooit zoveel dat de batterij gaat laden.
+            raw = max(0.0, raw - target.exclude_load_w)
         if previous_total_w is not None:
             raw = previous_total_w + (1.0 - settings.smoothing) * (raw - previous_total_w)
         total = raw
@@ -321,14 +330,12 @@ def control_step(
             reason="geen plan; terugval op zelfverbruik",
         )
     # Grenzen niet hoger dan wat de bruikbare batterijen aankunnen.
-    target = ControlTarget(
-        mode=target.mode,
-        fixed_w=target.fixed_w,
+    target = replace(
+        target,
         max_charge_w=min(target.max_charge_w, sum(b.max_charge_w for b in usable if b.can_charge())),
         max_discharge_w=min(
             target.max_discharge_w, sum(b.max_discharge_w for b in usable if b.can_discharge())
         ),
-        reason=target.reason,
     )
     battery_total = sum(b.ac_power_w or 0.0 for b in batteries)
     total = desired_total_w(target, p1_w, battery_total, previous_total_w, settings, other_battery_w)
@@ -350,6 +357,7 @@ __all__ = [
     "PowerCapLearner",
     "allocate",
     "control_step",
+    "dhw_exclusion_w",
     "desired_total_w",
     "force_charge_target",
     "safety_reasons",
@@ -378,3 +386,28 @@ def force_charge_target(batteries: list[BatteryState], target_pct: float) -> Con
         reason=f"handmatig laden tot {target_pct:.0f}% (knop Nu laden)",
     )
 
+
+
+def dhw_exclusion_w(
+    dhw_w: float | None,
+    mode: str,
+    buy_now: float,
+    best_later: float | None,
+    margin_eur: float,
+    min_w: float = MIN_DHW_W,
+) -> float:
+    """Hoeveel vermogen van een warmwaterrun uit het net moet komen in plaats van de batterij.
+
+    Het warm water maken gebeurt los van HEMS en zit niet in het huisprofiel, dus de
+    planner heeft die piek niet ingepland. Dekt de batterij hem toch, dan is die energie
+    weg voor de dure uren waar het plan hem voor bewaart. `best_later` is de hoogste prijs
+    waarop het plan nog wil ontladen; is die genoeg hoger dan nu, dan koopt het goedkoper
+    uit het net. Bij een vaste opdracht (netladen of verkopen) blijft het plan leidend.
+    """
+    if dhw_w is None or dhw_w < min_w:
+        return 0.0
+    if mode not in (MODE_SELF_CONSUMPTION, MODE_HOLD):
+        return 0.0
+    if best_later is None or best_later < buy_now + margin_eur:
+        return 0.0
+    return dhw_w
