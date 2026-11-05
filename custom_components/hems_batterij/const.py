@@ -26,6 +26,7 @@ CONF_NETTING_END = "netting_end"
 CONF_NETTING_ACTIVE = "netting_full_value"
 CONF_DEFAULT_LOAD_W = "default_load_w"
 CONF_SOLCAST_FIELD = "solcast_field"
+CONF_SOLCAST_FACTOR = "solcast_factor"
 CONF_PV_SOURCE = "pv_source"
 CONF_HELIOS_ENTITIES = "helios_entities"
 CONF_CONTROLLED = "controlled_batteries"
@@ -59,6 +60,9 @@ DEFAULTS = {
     CONF_NETTING_ACTIVE: True,
     CONF_DEFAULT_LOAD_W: 400,
     CONF_SOLCAST_FIELD: "pv_estimate",
+    # Solcast zat 20 okt - 4 nov 2026 gemiddeld ~30% te hoog, ook met schaduwcorrectie;
+    # x0,7 bracht de dagfout van 2,7 naar 1,5 kWh (Helios 2,0).
+    CONF_SOLCAST_FACTOR: 0.7,
     # Zonverwachting: Helios (per panelenveld, zelflerend) zat 6-13 okt 2026 elke dag
     # dichter bij de werkelijke opbrengst dan Solcast. Solcast blijft de terugval.
     CONF_PV_SOURCE: PV_SOURCE_HELIOS,

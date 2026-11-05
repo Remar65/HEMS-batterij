@@ -57,6 +57,7 @@ from .const import (
     CONF_PV_POWER,
     CONF_PV_SOURCE,
     CONF_SOLAR_FIRST_CT,
+    CONF_SOLCAST_FACTOR,
     CONF_SOLCAST_FIELD,
     CONF_SOLCAST_TODAY,
     CONF_SOLCAST_TOMORROW,
@@ -595,10 +596,12 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             if entities and not missing:
                 return periods, PV_SOURCE_HELIOS
             reason = f" (terugval: geen Helios-verwachting van {', '.join(missing) or 'geen sensoren'})"
+        factor = float(self._conf(CONF_SOLCAST_FACTOR))
         periods = []
         for key in (CONF_SOLCAST_TODAY, CONF_SOLCAST_TOMORROW):
             state = self._state(self._conf(key))
-            periods.extend(parse_solcast_detailed(state.attributes if state else None, field_name))
+            for period in parse_solcast_detailed(state.attributes if state else None, field_name):
+                periods.append(PvPeriod(start=period.start, end=period.end, kw=period.kw * factor))
         return periods, PV_SOURCE_SOLCAST + reason
 
     async def _async_fetch_weather(self, now: datetime) -> None:
