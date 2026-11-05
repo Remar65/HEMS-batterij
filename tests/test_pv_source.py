@@ -67,6 +67,24 @@ async def test_falls_back_to_solcast_when_a_field_is_missing(hass: HomeAssistant
     assert source.startswith("solcast")
     assert enphase in source
     start = now.replace(minute=0, second=0, microsecond=0)
+    # Solcast-terugval met de standaard correctiefactor 0,7.
+    assert abs(pv_kwh_between(periods, start, start + timedelta(hours=1)) - 3.5) < 1e-9
+
+
+async def test_solcast_factor_is_configurable(hass: HomeAssistant) -> None:
+    _set_states(hass)
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"batteries": "marstek_m1, marstek_m2"},
+        options={"pv_source": "solcast", "solcast_factor": 1.0},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    _solcast(hass, 5.0)
+    now = dt_util.now()
+    periods, _ = entry.runtime_data._pv_periods(now)
+    start = now.replace(minute=0, second=0, microsecond=0)
     assert abs(pv_kwh_between(periods, start, start + timedelta(hours=1)) - 5.0) < 1e-9
 
 

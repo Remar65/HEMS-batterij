@@ -32,6 +32,7 @@ from .const import (
     CONF_PV_POWER,
     CONF_PV_SOURCE,
     CONF_SOLAR_FIRST_CT,
+    CONF_SOLCAST_FACTOR,
     CONF_SOLCAST_FIELD,
     CONF_SOLCAST_TODAY,
     CONF_SOLCAST_TOMORROW,
@@ -149,6 +150,9 @@ class HemsOptionsFlow(OptionsFlow):
                 ): selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor", multiple=True)),
                 vol.Required(CONF_SOLCAST_FIELD, default=current[CONF_SOLCAST_FIELD]): vol.In(
                     ["pv_estimate", "pv_estimate10", "pv_estimate90"]
+                ),
+                vol.Required(CONF_SOLCAST_FACTOR, default=current[CONF_SOLCAST_FACTOR]): vol.All(
+                    vol.Coerce(float), vol.Range(min=0.1, max=2.0)
                 ),
             }
         )
