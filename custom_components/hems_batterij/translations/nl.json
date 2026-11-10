@@ -34,12 +34,13 @@
           "netting_end": "Einde saldering (JJJJ-MM-DD)",
           "default_load_w": "Huisverbruik zolang het profiel leeg is (W)",
           "solcast_field": "Solcast-schatting",
+          "solcast_factor": "Solcast-correctiefactor (1,0 = ongewijzigd; Solcast zat ~30% te hoog)",
           "netting_full_value": "Saldering: terugleveren even veel waard als afnemen",
           "solar_first_ct": "Zon eerst: zwaarte tegen terugleveren van zon die opgeslagen had kunnen worden (ct/kWh)",
           "trade_margin_ct": "Handelsdrempel: extra opbrengst nodig voor laden uit of verkopen aan het net (ct/kWh)",
           "investment_eur": "Aanschafprijs batterijen (€)",
           "feed_in_cost_ct": "Terugleverkosten na einde saldering (ct/kWh)",
-          "pv_source": "Bron zonverwachting (helios of solcast; solcast is de terugval)",
+          "pv_source": "Bron zonverwachting (solcast of helios; de andere is de terugval)",
           "helios_entities": "Helios-verwachtingssensoren (power_now, één per panelenveld)",
           "controlled_batteries": "Batterijen die HEMS stuurt (leeg = alleen meekijken; ook de schakelaar 'HEMS stuurt' moet aan)",
           "price_forecast": "Prijsvoorspelling gebruiken voor de dagen na de bekende prijzen",
@@ -48,7 +49,8 @@
           "heat_power": "Vermogen warmtepomp tijdens verwarmen (W)",
           "dhw_reserve": "Warm water uit het net als de batterij later meer opbrengt",
           "dhw_power": "Vermogen warmtepomp tijdens warm water maken (W)",
-          "price_forecast_url": "Adres terugval-prijsvoorspelling (EpexPredictor prices_short)"
+          "price_forecast_url": "Adres terugval-prijsvoorspelling (EpexPredictor prices_short)",
+          "pv_hour_correction": "Zonverwachting per uur corrigeren (leert zelf hoe ver de verwachting per uur naast de opbrengst zit, bijv. door bomenschaduw)"
         }
       }
     }

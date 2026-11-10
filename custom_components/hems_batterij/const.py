@@ -26,6 +26,8 @@ CONF_NETTING_END = "netting_end"
 CONF_NETTING_ACTIVE = "netting_full_value"
 CONF_DEFAULT_LOAD_W = "default_load_w"
 CONF_SOLCAST_FIELD = "solcast_field"
+CONF_SOLCAST_FACTOR = "solcast_factor"
+CONF_PV_HOUR_CORRECTION = "pv_hour_correction"
 CONF_PV_SOURCE = "pv_source"
 CONF_HELIOS_ENTITIES = "helios_entities"
 CONF_CONTROLLED = "controlled_batteries"
@@ -59,9 +61,16 @@ DEFAULTS = {
     CONF_NETTING_ACTIVE: True,
     CONF_DEFAULT_LOAD_W: 400,
     CONF_SOLCAST_FIELD: "pv_estimate",
-    # Zonverwachting: Helios (per panelenveld, zelflerend) zat 6-13 okt 2026 elke dag
-    # dichter bij de werkelijke opbrengst dan Solcast. Solcast blijft de terugval.
-    CONF_PV_SOURCE: PV_SOURCE_HELIOS,
+    # Solcast zat 20 okt - 4 nov 2026 gemiddeld ~30% te hoog, ook met schaduwcorrectie;
+    # x0,7 bracht de dagfout van 2,7 naar 1,5 kWh (Helios 2,0).
+    CONF_SOLCAST_FACTOR: 0.7,
+    # Zonverwachting: eerst Helios (6-13 okt 2026 dichterbij), maar 20 okt - 9 nov zat
+    # Solcast met correctie per uur dichter bij de werkelijke opbrengst (uurfout 0,20 tegen
+    # 0,28 kWh). Sinds v0.4.5 Solcast als hoofdbron (Marco, 10 nov 2026), Helios terugval.
+    CONF_PV_SOURCE: PV_SOURCE_SOLCAST,
+    # Per uur van de dag leren hoe ver de zonverwachting naast de echte opbrengst zit
+    # (bomenschaduw 's middags, lager wordende zon); zie pv_correction.py.
+    CONF_PV_HOUR_CORRECTION: True,
     CONF_HELIOS_ENTITIES: [
         "sensor.helios_apsystems_aiko_power_now",
         "sensor.helios_enphase_jinko_power_now",
