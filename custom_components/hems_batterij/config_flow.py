@@ -28,6 +28,7 @@ from .const import (
     CONF_PRICE_FORECAST_JEROEN,
     CONF_PRICE_FORECAST_URL,
     CONF_PRICE_SENSOR,
+    CONF_PV_HOUR_CORRECTION,
     CONF_PV_INVERTED,
     CONF_PV_POWER,
     CONF_PV_SOURCE,
@@ -154,6 +155,7 @@ class HemsOptionsFlow(OptionsFlow):
                 vol.Required(CONF_SOLCAST_FACTOR, default=current[CONF_SOLCAST_FACTOR]): vol.All(
                     vol.Coerce(float), vol.Range(min=0.1, max=2.0)
                 ),
+                vol.Required(CONF_PV_HOUR_CORRECTION, default=current[CONF_PV_HOUR_CORRECTION]): bool,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

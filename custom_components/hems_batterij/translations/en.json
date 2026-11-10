@@ -40,7 +40,7 @@
           "trade_margin_ct": "Trade margin: extra gain required for grid charging or selling (ct/kWh)",
           "investment_eur": "Battery investment (€)",
           "feed_in_cost_ct": "Feed-in cost after net metering ends (ct/kWh)",
-          "pv_source": "Solar forecast source (helios or solcast; solcast is the fallback)",
+          "pv_source": "Solar forecast source (solcast or helios; the other is the fallback)",
           "helios_entities": "Helios forecast sensors (power_now, one per panel field)",
           "controlled_batteries": "Batteries HEMS controls (empty = observe only; also needs the 'HEMS controls' switch)",
           "price_forecast": "Use price forecast for the days after the known prices",
@@ -49,7 +49,8 @@
           "heat_power": "Heat pump power while heating (W)",
           "dhw_reserve": "Take hot water from the grid when the battery is worth more later",
           "dhw_power": "Heat pump power while making hot water (W)",
-          "price_forecast_url": "Fallback price forecast URL (EpexPredictor prices_short)"
+          "price_forecast_url": "Fallback price forecast URL (EpexPredictor prices_short)",
+          "pv_hour_correction": "Correct the solar forecast per hour (learns how far each hour is off, e.g. tree shade)"
         }
       }
     }

@@ -53,6 +53,7 @@ from .const import (
     CONF_PRICE_FORECAST_JEROEN,
     CONF_PRICE_FORECAST_URL,
     CONF_PRICE_SENSOR,
+    CONF_PV_HOUR_CORRECTION,
     CONF_PV_INVERTED,
     CONF_PV_POWER,
     CONF_PV_SOURCE,
@@ -132,6 +133,7 @@ from .price_forecast import (
     parse_jeroen,
 )
 from .prices import PriceSlot, parse_zonneplan_forecast, upcoming_slots
+from .pv_correction import PvHourCorrection
 from .shadow import ShadowBattery
 from .shadow_hbc import HbcTargets, hbc_counteracts, hbc_step
 
@@ -174,6 +176,7 @@ class HemsData:
     shadow_since: datetime | None = None
     shadow_result: ControlResult | None = None
     pv_source: str | None = None
+    pv_correction: dict[str, Any] = field(default_factory=dict)
     price_source: str | None = None
     price_forecast: dict[str, Any] = field(default_factory=dict)
     heat_forecast: dict[str, Any] = field(default_factory=dict)
@@ -255,6 +258,12 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         self._heat_days: dict[date, float] = {}
         self._heat_line: tuple[float, float] | None = None
         self._heat_tz: Any = None
+        # Zon: per uur van de dag leren hoe ver Solcast en Helios naast de opbrengst zitten.
+        self.pv_correction = PvHourCorrection()
+        self._pv_hour_start: datetime | None = None
+        self._pv_hour_wh = 0.0
+        self._pv_hour_seconds = 0.0
+        self._pv_hour_forecast: dict[str, float] = {}
         self.shadow = ShadowBattery()
         self._shadow_cost_today = 0.0
         self._shadow_saving_total = 0.0
@@ -355,6 +364,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         self._forecast_source = forecast.get("source")
         self._tariff = Tariff.from_list(forecast.get("tariff"))
         self.forecast_skill = ForecastSkill.from_dict(stored.get("forecast_skill"))
+        self.pv_correction = PvHourCorrection.from_dict(stored.get("pv_correction"))
         heat = stored.get("heat") or {}
         self.heat_model = HeatModel.from_dict(heat.get("model"))
         self._temps = _temps_from_store(heat.get("temps"))
@@ -424,6 +434,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
                 "tariff": self._tariff.to_list() if self._tariff else None,
             },
             "forecast_skill": self.forecast_skill.to_dict(),
+            "pv_correction": self.pv_correction.to_dict(),
             "heat": {
                 "model": self.heat_model.to_dict(),
                 "temps": [[int(t.timestamp()), v] for t, v in sorted(self._temps.items())],
@@ -573,36 +584,97 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         return dt_util.start_of_local_day(day)
 
     # ---------------------------------------------------------------- planning
-    def _pv_periods(self, now: datetime) -> tuple[list[PvPeriod], str]:
-        """Zonverwachting uit Helios, of uit Solcast als Helios niet compleet is.
+    def _helios_raw(self, now: datetime) -> tuple[list[PvPeriod], list[str]]:
+        """Helios-verwachting (alle velden opgeteld) en de velden zonder verwachting.
 
         Helios telt alleen als elk ingesteld veld een verwachting voor de komende
         tijd heeft; met één veld zou de verwachting maar half zo groot zijn.
         """
         field_name = str(self._conf(CONF_SOLCAST_FIELD))
-        reason = ""
-        if self._conf(CONF_PV_SOURCE) == PV_SOURCE_HELIOS:
-            entities = self._conf(CONF_HELIOS_ENTITIES) or []
-            if isinstance(entities, str):
-                entities = [entities]
-            periods: list[PvPeriod] = []
-            missing = []
-            for entity_id in entities:
-                state = self._state(entity_id)
-                found = parse_helios_forecast(state.attributes if state else None, field_name)
-                if not any(p.end > now for p in found):
-                    missing.append(entity_id)
-                periods.extend(found)
-            if entities and not missing:
-                return periods, PV_SOURCE_HELIOS
-            reason = f" (terugval: geen Helios-verwachting van {', '.join(missing) or 'geen sensoren'})"
-        factor = float(self._conf(CONF_SOLCAST_FACTOR))
-        periods = []
+        entities = self._conf(CONF_HELIOS_ENTITIES) or []
+        if isinstance(entities, str):
+            entities = [entities]
+        periods: list[PvPeriod] = []
+        missing = []
+        for entity_id in entities:
+            state = self._state(entity_id)
+            found = parse_helios_forecast(state.attributes if state else None, field_name)
+            if not any(p.end > now for p in found):
+                missing.append(entity_id)
+            periods.extend(found)
+        if not entities:
+            missing.append("geen sensoren")
+        return periods, missing
+
+    def _solcast_raw(self) -> list[PvPeriod]:
+        field_name = str(self._conf(CONF_SOLCAST_FIELD))
+        periods: list[PvPeriod] = []
         for key in (CONF_SOLCAST_TODAY, CONF_SOLCAST_TOMORROW):
             state = self._state(self._conf(key))
-            for period in parse_solcast_detailed(state.attributes if state else None, field_name):
-                periods.append(PvPeriod(start=period.start, end=period.end, kw=period.kw * factor))
-        return periods, PV_SOURCE_SOLCAST + reason
+            periods.extend(parse_solcast_detailed(state.attributes if state else None, field_name))
+        return periods
+
+    def _corrected(self, periods: list[PvPeriod], source: str) -> list[PvPeriod]:
+        """Zonverwachting met de geleerde factor per uur van de dag.
+
+        Zolang een uur nog niet genoeg dagen heeft, geldt voor Solcast de vaste
+        correctiefactor (Solcast zat ~30% te hoog) en voor Helios niets.
+        """
+        default = float(self._conf(CONF_SOLCAST_FACTOR)) if source == PV_SOURCE_SOLCAST else 1.0
+        learned = self._conf(CONF_PV_HOUR_CORRECTION)
+        result = []
+        for period in periods:
+            factor = None
+            if learned:
+                factor = self.pv_correction.factor(source, dt_util.as_local(period.start).hour)
+            result.append(replace(period, kw=period.kw * (default if factor is None else factor)))
+        return result
+
+    def _pv_periods(self, now: datetime) -> tuple[list[PvPeriod], str]:
+        """Zonverwachting uit de gekozen bron, met de andere als terugval."""
+        if self._conf(CONF_PV_SOURCE) == PV_SOURCE_HELIOS:
+            periods, missing = self._helios_raw(now)
+            if not missing:
+                return self._corrected(periods, PV_SOURCE_HELIOS), PV_SOURCE_HELIOS
+            reason = f" (terugval: geen Helios-verwachting van {', '.join(missing)})"
+            return self._corrected(self._solcast_raw(), PV_SOURCE_SOLCAST), PV_SOURCE_SOLCAST + reason
+        solcast = self._solcast_raw()
+        if any(p.end > now for p in solcast):
+            return self._corrected(solcast, PV_SOURCE_SOLCAST), PV_SOURCE_SOLCAST
+        periods, missing = self._helios_raw(now)
+        if not missing:
+            reason = " (terugval: geen Solcast-verwachting)"
+            return self._corrected(periods, PV_SOURCE_HELIOS), PV_SOURCE_HELIOS + reason
+        return self._corrected(solcast, PV_SOURCE_SOLCAST), PV_SOURCE_SOLCAST
+
+    def _learn_pv(self, now: datetime, pv_w: float | None, dt: float) -> None:
+        """Zonopbrengst per uur optellen; na elk uur per bron de verwachting ernaast leggen.
+
+        De verwachting voor een uur is wat de bron aan het begin van dat uur gaf
+        (ongecorrigeerd), zodat de factor precies corrigeert wat de planner gebruikt.
+        """
+        hour = dt_util.as_local(now).replace(minute=0, second=0, microsecond=0)
+        if hour != self._pv_hour_start:
+            # Alleen uren met genoeg metingen (een herstart midden in een uur telt niet).
+            if self._pv_hour_start is not None and self._pv_hour_seconds >= 2700:
+                actual = self._pv_hour_wh / 1000.0 * 3600.0 / self._pv_hour_seconds
+                for source, kwh in self._pv_hour_forecast.items():
+                    self.pv_correction.record(source, self._pv_hour_start, actual, kwh)
+                self._store.async_delay_save(self._storage_payload, 60)
+            self._pv_hour_start = hour
+            self._pv_hour_wh = 0.0
+            self._pv_hour_seconds = 0.0
+            end = hour + timedelta(hours=1)
+            self._pv_hour_forecast = {}
+            solcast = self._solcast_raw()
+            if any(p.end > hour for p in solcast):
+                self._pv_hour_forecast[PV_SOURCE_SOLCAST] = pv_kwh_between(solcast, hour, end)
+            helios, missing = self._helios_raw(now)
+            if not missing:
+                self._pv_hour_forecast[PV_SOURCE_HELIOS] = pv_kwh_between(helios, hour, end)
+        if pv_w is not None and dt:
+            self._pv_hour_wh += pv_w * dt / 3600.0
+            self._pv_hour_seconds += dt
 
     async def _async_fetch_weather(self, now: datetime) -> None:
         """Uurtemperatuur ophalen (elk uur) voor de verwachte stroom voor verwarming."""
@@ -825,6 +897,10 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             return
 
         pv_periods, self.data.pv_source = self._pv_periods(now)
+        self.data.pv_correction = {
+            source: {"dagen": self.pv_correction.days(source), "per_uur": self.pv_correction.factors(source)}
+            for source in (PV_SOURCE_SOLCAST, PV_SOURCE_HELIOS)
+        } | {"actief": bool(self._conf(CONF_PV_HOUR_CORRECTION))}
         self._prepare_heat(now)
 
         # Tijdens saldering is terugleveren evenveel waard als afnemen; daarna (of als
@@ -932,6 +1008,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         if p1 is not None and prev_shadow is not None:
             # Netmeting als de schaduw het voor het zeggen had gehad.
             shadow_grid = p1 + planned_w - prev_shadow.total_w
+        self._learn_pv(now, pv, dt)
         self._learn(now, house, p1, battery_total, shadow_grid, hems_is_real=active)
 
         step = self._plan.step_at(now) if self._plan else None
