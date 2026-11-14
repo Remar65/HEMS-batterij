@@ -108,6 +108,12 @@
       },
       "besparing_hems_vandaag": {
         "name": "Besparing HEMS vandaag (schaduw)"
+      },
+      "warmte_geleerd": {
+        "name": "Warmtemodel geleerd"
+      },
+      "warmte_voorstellen": {
+        "name": "Warmte-voorstellen"
       }
     },
     "binary_sensor": {

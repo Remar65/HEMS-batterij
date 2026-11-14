@@ -91,6 +91,10 @@ async def test_setup_creates_sensors_and_never_calls_services(hass: HomeAssistan
     assert state_of("voorstel_marstek_m1") is not None
     assert state_of("besparing_vandaag") is not None
     assert state_of("terugverdientijd").attributes["investering"] == 2625.0
+    # Warmtemodel: nog niets gemeten, wel de sensoren.
+    assert float(state_of("warmte_geleerd").state) == 0
+    assert state_of("warmte_geleerd").attributes["cop_verwarming"] == "nog aan het leren"
+    assert float(state_of("warmte_voorstellen").state) == 0
 
     shadow = registry.async_get_entity_id("binary_sensor", DOMAIN, f"{entry.entry_id}_meekijkmodus")
     assert hass.states.get(shadow).state == "on"

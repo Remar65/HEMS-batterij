@@ -43,9 +43,19 @@ from .const import (
     CONF_DHW_RESERVE,
     CONF_FEED_IN_COST_CT,
     CONF_HEAT_FORECAST,
+    CONF_HEAT_LEARNING,
     CONF_HEAT_POWER,
     CONF_HELIOS_ENTITIES,
     CONF_INVESTMENT_EUR,
+    CONF_LEARN_FLOOR_MODE,
+    CONF_LEARN_KITCHEN,
+    CONF_LEARN_LEAD,
+    CONF_LEARN_OUTDOOR,
+    CONF_LEARN_ROOM,
+    CONF_LEARN_STATUS,
+    CONF_LEARN_TANK,
+    CONF_LEARN_VRC_ROOM,
+    CONF_LEARN_YIELD,
     CONF_NETTING_ACTIVE,
     CONF_NETTING_END,
     CONF_P1_POWER,
@@ -136,6 +146,7 @@ from .prices import PriceSlot, parse_zonneplan_forecast, upcoming_slots
 from .pv_correction import PvHourCorrection
 from .shadow import ShadowBattery
 from .shadow_hbc import HbcTargets, hbc_counteracts, hbc_step
+from .warmte_leren import HeatLearner, Readings
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -180,6 +191,7 @@ class HemsData:
     price_source: str | None = None
     price_forecast: dict[str, Any] = field(default_factory=dict)
     heat_forecast: dict[str, Any] = field(default_factory=dict)
+    heat_learning: dict[str, Any] = field(default_factory=dict)
     control_active: bool = False
     controlled: list[str] = field(default_factory=list)
     commands: dict[str, Command] = field(default_factory=dict)
@@ -260,6 +272,8 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         self._heat_tz: Any = None
         # Zon: per uur van de dag leren hoe ver Solcast en Helios naast de opbrengst zitten.
         self.pv_correction = PvHourCorrection()
+        # Zelflerend warmtemodel (COP, huis, vat) met voorstellen; stuurt niets.
+        self.heat_learner = HeatLearner()
         self._pv_hour_start: datetime | None = None
         self._pv_hour_wh = 0.0
         self._pv_hour_seconds = 0.0
@@ -374,6 +388,8 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         if isinstance(hourly, list) and len(hourly) == 24:
             self._heat_hourly = [float(x) for x in hourly]
         self._heat_seconds = float(heat.get("seconds") or 0.0)
+        self.heat_learner = HeatLearner.from_dict(stored.get("heat_learning"))
+        self._update_heat_learning()
 
         self._unsubs.append(
             async_track_time_interval(self.hass, self._async_fast_tick, timedelta(seconds=FAST_LOOP_SECONDS))
@@ -435,6 +451,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             },
             "forecast_skill": self.forecast_skill.to_dict(),
             "pv_correction": self.pv_correction.to_dict(),
+            "heat_learning": self.heat_learner.to_dict(),
             "heat": {
                 "model": self.heat_model.to_dict(),
                 "temps": [[int(t.timestamp()), v] for t, v in sorted(self._temps.items())],
@@ -1009,6 +1026,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             # Netmeting als de schaduw het voor het zeggen had gehad.
             shadow_grid = p1 + planned_w - prev_shadow.total_w
         self._learn_pv(now, pv, dt)
+        self._learn_heat_model(now, pv, dt)
         self._learn(now, house, p1, battery_total, shadow_grid, hems_is_real=active)
 
         step = self._plan.step_at(now) if self._plan else None
@@ -1283,6 +1301,42 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             self._heat_hourly[now.hour] += heat_w * dt / 3_600_000.0
             self._heat_seconds += dt
         return heat_w
+
+    def _learn_heat_model(self, now: datetime, pv_w: float | None, dt: float) -> None:
+        """Metingen voor het zelflerende warmtemodel; elk afgerond uur opnieuw doorrekenen."""
+        if not self._conf(CONF_HEAT_LEARNING):
+            return
+
+        def temp(key: str) -> float | None:
+            value = _float_state(self._state(self._conf(key)))
+            # Tuya geeft bij een herstart eenmalig -20; onzinwaarden niet meenemen.
+            return value if value is not None and -30 < value < 90 else None
+
+        status = self._state(self._conf(CONF_LEARN_STATUS))
+        mode = self._state(self._conf(CONF_LEARN_FLOOR_MODE))
+        readings = Readings(
+            t_out=temp(CONF_LEARN_OUTDOOR),
+            room=temp(CONF_LEARN_ROOM),
+            vrc_room=temp(CONF_LEARN_VRC_ROOM),
+            kitchen=temp(CONF_LEARN_KITCHEN),
+            heat_w=_float_state(self._state(self._conf(CONF_HEAT_POWER))),
+            dhw_w=_float_state(self._state(self._conf(CONF_DHW_POWER))),
+            yield_kw=_float_state(self._state(self._conf(CONF_LEARN_YIELD))),
+            status=status.state if status else None,
+            pv_w=pv_w,
+            tank=temp(CONF_LEARN_TANK),
+            laden=bool(mode and mode.state == "laden"),
+        )
+        if self.heat_learner.add(now, dt, readings):
+            self._update_heat_learning()
+            self._store.async_delay_save(self._storage_payload, 60)
+
+    def _update_heat_learning(self) -> None:
+        if not self._conf(CONF_HEAT_LEARNING):
+            self.data.heat_learning = {}
+            return
+        settings = {"voorsprong": _float_state(self._state(self._conf(CONF_LEARN_LEAD)))}
+        self.data.heat_learning = self.heat_learner.summary(settings)
 
     def _add_log(self, now: datetime, mode: str, reason: str, **extra: Any) -> None:
         entry = {"tijd": now.isoformat(timespec="seconds"), "modus": mode, "reden": reason}

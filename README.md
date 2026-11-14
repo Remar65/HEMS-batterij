@@ -102,6 +102,22 @@ op goedkope uren, dat komt vanzelf mee). Met minder dan 7 dagen, of minder dan 3
 telt het gemeten daggemiddelde. Attribuut `verwarming` op *Verwachte besparing plan* toont de
 lijn en per dag de buitentemperatuur en verwachte kWh. Uit te zetten in de opties.
 
+**Zelflerend warmtemodel (v0.5.0, alleen meekijken).** HEMS legt per uur vast wat de
+warmtepomp, het huis en het boilervat deden (ebusd-warmte, eigen kWh-meter, woonkamer, keuken,
+VRC-voeler, vat, zon, vloerbuffermodus) en leert daaruit, over de laatste 45 dagen:
+
+- de COP per buitentemperatuur, apart voor verwarming en warm water;
+- het huis: warmteverlies (W per graad), kWh warmte per graad kamer en welk deel van de warmte
+  pas 1 tot 2 uur later in de kamer aankomt (nawarmen van de dekvloer). Uren met de houtkachel
+  (VRC-voeler meer dan 1 graad warmer dan de keuken) tellen niet mee;
+- het vat: afkoeling per uur buiten laden en tappen, kWh stroom per graad, en op welke uren er
+  getapt wordt.
+
+Uit het geleerde maakt het voorstellen ten opzichte van wat nu in de automatiseringen staat
+(COP-formules, marge voor de afkoeling van het vat, voorsprong naverwarming). Niets wordt
+automatisch aangepast. Sensoren *Warmtemodel geleerd* (uren, met alles als attributen) en
+*Warmte-voorstellen* (aantal, met de lijst als attribuut).
+
 Elk kwartier krijgt een modus met een leesbare reden:
 
 | Modus | Betekenis |
@@ -161,6 +177,8 @@ moment in het attribuut `beslislog` van de modus-sensor en in het HA-log.
 | Terugverdientijd | aanschafprijs ÷ gemeten besparing per jaar (pas zinvol na een paar weken) |
 | Rendement (gemeten) | gewogen round-trip-rendement en gebruikte slijtage |
 | Minimale spread nu | break-even prijsverschil voor laden uit het net, in ct |
+| Warmtemodel geleerd | uren gemeten; attributen: COP verwarming en warm water, huis, vat, laden |
+| Warmte-voorstellen | aantal voorstellen; attribuut: de voorstellen met reden en zekerheid |
 | Meekijkmodus | aan zolang HEMS niets stuurt |
 | HEMS stuurt (schakelaar) | aan = de gekozen batterijen volgen HEMS; attributen: gestuurde batterijen, actief |
 | Vangnet | aan als er iets ontbreekt of een alarm is; attribuut: redenen |
