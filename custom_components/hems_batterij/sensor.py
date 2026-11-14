@@ -238,6 +238,20 @@ SENSORS: tuple[HemsSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda d: _round(d.break_even_ct, 1),
     ),
+    HemsSensorDescription(
+        key="warmte_geleerd",
+        translation_key="warmte_geleerd",
+        native_unit_of_measurement="h",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: d.heat_learning.get("uren_gemeten"),
+        attrs_fn=lambda d: {k: v for k, v in d.heat_learning.items() if k != "voorstellen"},
+    ),
+    HemsSensorDescription(
+        key="warmte_voorstellen",
+        translation_key="warmte_voorstellen",
+        value_fn=lambda d: len(d.heat_learning["voorstellen"]) if "voorstellen" in d.heat_learning else None,
+        attrs_fn=lambda d: {"voorstellen": d.heat_learning.get("voorstellen", [])},
+    ),
 )
 
 

@@ -45,6 +45,16 @@ CONF_HEAT_FORECAST = "heat_forecast"
 CONF_HEAT_POWER = "heat_power"
 CONF_DHW_POWER = "dhw_power"
 CONF_DHW_RESERVE = "dhw_reserve"
+CONF_HEAT_LEARNING = "heat_learning"
+CONF_LEARN_OUTDOOR = "learn_outdoor"
+CONF_LEARN_ROOM = "learn_room"
+CONF_LEARN_VRC_ROOM = "learn_vrc_room"
+CONF_LEARN_KITCHEN = "learn_kitchen"
+CONF_LEARN_YIELD = "learn_yield"
+CONF_LEARN_STATUS = "learn_status"
+CONF_LEARN_TANK = "learn_tank"
+CONF_LEARN_FLOOR_MODE = "learn_floor_mode"
+CONF_LEARN_LEAD = "learn_lead"
 
 DEFAULTS = {
     CONF_P1_POWER: "sensor.p1_meter_power",
@@ -92,6 +102,17 @@ DEFAULTS = {
     CONF_HEAT_POWER: "sensor.warmtepomp_vermogen_verwarming",
     CONF_DHW_POWER: "sensor.warmtepomp_vermogen_warm_water",
     CONF_DHW_RESERVE: True,
+    # Zelflerend warmtemodel, alleen meekijken (Marco koos "In HEMS", 14 nov 2026).
+    CONF_HEAT_LEARNING: True,
+    CONF_LEARN_OUTDOOR: "sensor.buitentemperatuur_gemiddeld",
+    CONF_LEARN_ROOM: "sensor.meter_pro_co2_203d_temperatuur",
+    CONF_LEARN_VRC_ROOM: "sensor.my_home_zone_wonen_circuit_0_current_temperature",
+    CONF_LEARN_KITCHEN: "sensor.keuken_temperatuur",
+    CONF_LEARN_YIELD: "sensor.heating_ebusd_hmu_currentyieldpower",
+    CONF_LEARN_STATUS: "sensor.heating_ebusd_hmu_rundatastatuscode",
+    CONF_LEARN_TANK: "sensor.heating_ebusd_basv2_hwcstoragetemp",
+    CONF_LEARN_FLOOR_MODE: "input_select.vloerbuffer_modus",
+    CONF_LEARN_LEAD: "input_number.vloerbuffer_voorsprong_naverwarming",
     CONF_PRICE_FORECAST_URL: "https://epexpredictor.batzill.com/prices_short?region=NL&unit=EUR_PER_KWH&hours=168",
     # Batterijen die HEMS zelf aanstuurt (leeg = alleen meekijken). Marco, 17 okt 2026:
     # eerst alleen de M2; de M1 blijft bij HBC.

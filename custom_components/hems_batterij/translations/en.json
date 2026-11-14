@@ -108,6 +108,12 @@
       },
       "besparing_hems_vandaag": {
         "name": "HEMS saving today (shadow)"
+      },
+      "warmte_geleerd": {
+        "name": "Heat model learned"
+      },
+      "warmte_voorstellen": {
+        "name": "Heat proposals"
       }
     },
     "binary_sensor": {
