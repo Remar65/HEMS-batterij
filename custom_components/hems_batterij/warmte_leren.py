@@ -189,7 +189,8 @@ class HourAccumulator:
                 s.heat_elec_kwh += r.heat_w * h / 1000.0
             if r.dhw_w is not None and r.dhw_w > 0:
                 s.dhw_elec_kwh += r.dhw_w * h / 1000.0
-            if r.yield_kw is not None and r.yield_kw > 0:
+            # Ontdooien kost warmte (negatieve opbrengst): gewoon meetellen.
+            if r.yield_kw is not None:
                 if hwc:
                     s.dhw_yield_kwh += r.yield_kw * h
                 else:
