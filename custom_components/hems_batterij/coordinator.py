@@ -55,6 +55,8 @@ from .const import (
     CONF_LEARN_ROOM,
     CONF_LEARN_STATUS,
     CONF_LEARN_TANK,
+    CONF_LEARN_UP1,
+    CONF_LEARN_UP2,
     CONF_LEARN_VRC_ROOM,
     CONF_LEARN_WEATHER,
     CONF_LEARN_YIELD,
@@ -1340,6 +1342,8 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             laden=bool(mode and mode.state == "laden"),
             humidity=_float_attr(weather, "humidity"),
             wind=_float_attr(weather, "wind_speed"),
+            up1=temp(CONF_LEARN_UP1),
+            up2=temp(CONF_LEARN_UP2),
         )
         if self.heat_learner.add(now, dt, readings):
             self._update_heat_learning()
