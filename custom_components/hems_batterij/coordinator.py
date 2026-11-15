@@ -47,6 +47,7 @@ from .const import (
     CONF_HEAT_POWER,
     CONF_HELIOS_ENTITIES,
     CONF_INVESTMENT_EUR,
+    CONF_LEARN_DHW_DEFROST,
     CONF_LEARN_FLOOR_MODE,
     CONF_LEARN_KITCHEN,
     CONF_LEARN_LEAD,
@@ -55,6 +56,7 @@ from .const import (
     CONF_LEARN_STATUS,
     CONF_LEARN_TANK,
     CONF_LEARN_VRC_ROOM,
+    CONF_LEARN_WEATHER,
     CONF_LEARN_YIELD,
     CONF_NETTING_ACTIVE,
     CONF_NETTING_END,
@@ -220,6 +222,15 @@ def _float_state(state: State | None) -> float | None:
         return None
     try:
         return float(state.state)
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_attr(state: State | None, attr: str) -> float | None:
+    if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+        return None
+    try:
+        return float(state.attributes.get(attr))
     except (TypeError, ValueError):
         return None
 
@@ -1314,6 +1325,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
 
         status = self._state(self._conf(CONF_LEARN_STATUS))
         mode = self._state(self._conf(CONF_LEARN_FLOOR_MODE))
+        weather = self._state(self._conf(CONF_LEARN_WEATHER))
         readings = Readings(
             t_out=temp(CONF_LEARN_OUTDOOR),
             room=temp(CONF_LEARN_ROOM),
@@ -1326,6 +1338,8 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             pv_w=pv_w,
             tank=temp(CONF_LEARN_TANK),
             laden=bool(mode and mode.state == "laden"),
+            humidity=_float_attr(weather, "humidity"),
+            wind=_float_attr(weather, "wind_speed"),
         )
         if self.heat_learner.add(now, dt, readings):
             self._update_heat_learning()
@@ -1335,7 +1349,10 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         if not self._conf(CONF_HEAT_LEARNING):
             self.data.heat_learning = {}
             return
-        settings = {"voorsprong": _float_state(self._state(self._conf(CONF_LEARN_LEAD)))}
+        settings = {
+            "voorsprong": _float_state(self._state(self._conf(CONF_LEARN_LEAD))),
+            "ontdooicorrectie_ww": _float_state(self._state(self._conf(CONF_LEARN_DHW_DEFROST))),
+        }
         self.data.heat_learning = self.heat_learner.summary(settings)
 
     def _add_log(self, now: datetime, mode: str, reason: str, **extra: Any) -> None:

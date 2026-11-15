@@ -13,6 +13,10 @@ het huis en het boilervat deden en leert daaruit:
   houtkachel aan tellen niet mee.
 - Het boilervat: afkoeling per uur buiten laadbeurten en tappen, kWh stroom per graad
   opwarmen, en op welke uren er warm water getapt wordt.
+- Ontdooien: per klasse buitentemperatuur en luchtvochtigheid hoeveel minuten per
+  draaiuur de warmtepomp ontdooit en hoeveel COP dat kost, vergeleken met uren zonder
+  ontdooien. De automatiseringen rekenen nu met een vaste straf (vloerbuffer 25%,
+  warm water 10%).
 
 Uit het geleerde maakt voorstellen() concrete voorstellen ten opzichte van wat nu
 ingesteld is. Die voert niemand automatisch uit; Marco beslist.
@@ -45,6 +49,17 @@ TANK_KWH_PER_K = 0.223
 CURRENT_FLOOR_COP = (3.2, 0.1)  # vloerbuffer: COP = 3,2 + 0,1 x T
 CURRENT_DHW_COP = (2.3, 0.05)  # warm water: COP = 2,3 + 0,05 x T
 CURRENT_TANK_LOSS = 0.35  # °C per uur, marge nachtbijwarmen
+CURRENT_DEFROST_FLOOR = 0.25  # COP-straf vloer vooruit laden bij ontdooiweer
+CURRENT_DEFROST_DHW = 0.10  # input_number.warm_water_ontdooicorrectie
+
+# Ontdooiweer zoals de automatiseringen het herkennen: -2 tot 5 °C en vochtig.
+DEFROST_T_MIN = -2.0
+DEFROST_T_MAX = 5.0
+DEFROST_HUMID = 90.0
+# Klassen buitentemperatuur voor het ontdooioverzicht (ondergrens, bovengrens).
+DEFROST_BINS = ((-30.0, -2.0), (-2.0, 1.0), (1.0, 3.0), (3.0, 5.0), (5.0, 8.0), (8.0, 40.0))
+DEFROST_MIN_RUN_HOURS = 3.0  # draaiuren per klasse voor een uitspraak
+DEFROST_MIN_PENALTY_HOURS = 10  # uren ontdooiweer voor een voorstel
 
 # Minimale hoeveelheid gegevens voor een uitspraak.
 COP_MIN_HOURS = 12
@@ -74,6 +89,10 @@ class HourSample:
     tank_min: float | None = None
     dhw_active: bool = False
     laden_seconds: float = 0.0
+    run_seconds: float = 0.0  # compressor aan (verwarmen, warm water of ontdooien)
+    deice_seconds: float = 0.0
+    humidity: float | None = None  # gemiddeld over het uur
+    wind: float | None = None  # km/h, gemiddeld over het uur
 
     def to_list(self) -> list[Any]:
         def r(x: float | None, d: int = 3) -> float | None:
@@ -96,11 +115,16 @@ class HourSample:
             r(self.tank_min, 2),
             int(self.dhw_active),
             round(self.laden_seconds),
+            round(self.run_seconds),
+            round(self.deice_seconds),
+            r(self.humidity, 1),
+            r(self.wind, 1),
         ]
 
     @classmethod
     def from_list(cls, raw: Any) -> HourSample | None:
-        if not isinstance(raw, list) or len(raw) != 16:
+        # 16 velden: opgeslagen door v0.5.0 (nog zonder ontdooien en weer).
+        if not isinstance(raw, list) or len(raw) not in (16, 20):
             return None
         try:
             start = datetime.fromisoformat(raw[0])
@@ -130,6 +154,10 @@ class HourSample:
             tank_min=f(raw[13]),
             dhw_active=bool(raw[14]),
             laden_seconds=f(raw[15]) or 0.0,
+            run_seconds=(f(raw[16]) or 0.0) if len(raw) == 20 else 0.0,
+            deice_seconds=(f(raw[17]) or 0.0) if len(raw) == 20 else 0.0,
+            humidity=f(raw[18]) if len(raw) == 20 else None,
+            wind=f(raw[19]) if len(raw) == 20 else None,
         )
 
 
@@ -148,6 +176,8 @@ class Readings:
     pv_w: float | None = None
     tank: float | None = None
     laden: bool = False
+    humidity: float | None = None
+    wind: float | None = None
 
 
 class HourAccumulator:
@@ -157,6 +187,8 @@ class HourAccumulator:
         self.current: HourSample | None = None
         self._t_out_sum = 0.0
         self._t_out_s = 0.0
+        self._hum_sum = self._hum_s = 0.0
+        self._wind_sum = self._wind_s = 0.0
 
     def add(self, now: datetime, dt: float, r: Readings) -> HourSample | None:
         """Meting toevoegen; geeft het afgeronde vorige uur terug zodra een nieuw uur begint."""
@@ -167,6 +199,8 @@ class HourAccumulator:
         if self.current is None:
             self.current = HourSample(start=hour, room_start=r.room, tank_start=r.tank, tank_min=r.tank)
             self._t_out_sum = self._t_out_s = 0.0
+            self._hum_sum = self._hum_s = 0.0
+            self._wind_sum = self._wind_s = 0.0
         s = self.current
         if s.room_start is None:
             s.room_start = r.room
@@ -202,6 +236,16 @@ class HourAccumulator:
                 self._t_out_s += dt
             if r.laden:
                 s.laden_seconds += dt
+            if r.status and ("compressor_active" in r.status or "deicing" in r.status):
+                s.run_seconds += dt
+            if r.status and "deicing" in r.status:
+                s.deice_seconds += dt
+            if r.humidity is not None:
+                self._hum_sum += r.humidity * dt
+                self._hum_s += dt
+            if r.wind is not None:
+                self._wind_sum += r.wind * dt
+                self._wind_s += dt
         return finished
 
     def _finish(self) -> HourSample | None:
@@ -211,6 +255,10 @@ class HourAccumulator:
             return None
         if self._t_out_s > 0:
             s.t_out = self._t_out_sum / self._t_out_s
+        if self._hum_s > 0:
+            s.humidity = self._hum_sum / self._hum_s
+        if self._wind_s > 0:
+            s.wind = self._wind_sum / self._wind_s
         return s if s.seconds >= MIN_HOUR_SECONDS else None
 
 
@@ -251,18 +299,33 @@ class CopFit:
         return max(1.0, min(7.0, self.a + self.b * t))
 
 
-def fit_cop(samples: list[HourSample], mode: str) -> CopFit | None:
-    """COP = a + b x buitentemperatuur, gewogen naar stroomverbruik per uur."""
+def _pure_hour(s: HourSample, mode: str) -> tuple[float, float] | None:
+    """(warmte, stroom) van een uur met alleen verwarming of alleen warm water."""
+    elec = s.heat_elec_kwh if mode == "verwarming" else s.dhw_elec_kwh
+    heat = s.heat_yield_kwh if mode == "verwarming" else s.dhw_yield_kwh
+    # Gemengde uren (deels warm water, deels verwarming) zijn onzuiver.
+    other = s.dhw_elec_kwh if mode == "verwarming" else s.heat_elec_kwh
+    if elec < 0.15 or other > 0.1 * elec:
+        return None
+    return heat, elec
+
+
+def fit_cop(samples: list[HourSample], mode: str, without_deice: bool = False) -> CopFit | None:
+    """COP = a + b x buitentemperatuur, gewogen naar stroomverbruik per uur.
+
+    without_deice: alleen uren zonder ontdooien (de COP die de warmtepomp haalt als
+    hij niet hoeft te ontdooien), om de ontdooistraf tegen af te zetten.
+    """
     pts: list[tuple[float, float, float]] = []  # (t, yield, elec)
     for s in samples:
         if s.t_out is None:
             continue
-        elec = s.heat_elec_kwh if mode == "verwarming" else s.dhw_elec_kwh
-        heat = s.heat_yield_kwh if mode == "verwarming" else s.dhw_yield_kwh
-        # Gemengde uren (deels warm water, deels verwarming) zijn onzuiver.
-        other = s.dhw_elec_kwh if mode == "verwarming" else s.heat_elec_kwh
-        if elec < 0.15 or heat <= 0 or other > 0.1 * elec:
+        if without_deice and (s.deice_seconds > 0 or s.run_seconds <= 0):
             continue
+        pure = _pure_hour(s, mode)
+        if pure is None or pure[0] <= 0:
+            continue
+        heat, elec = pure
         pts.append((s.t_out, heat, elec))
     total = sum(e for _, _, e in pts)
     if len(pts) < COP_MIN_HOURS or total < COP_MIN_KWH:
@@ -381,6 +444,102 @@ def fit_tank(samples: list[HourSample]) -> TankFit:
     )
 
 
+def is_defrost_weather(s: HourSample) -> bool:
+    """Ontdooiweer zoals de automatiseringen het herkennen."""
+    return (
+        s.t_out is not None
+        and s.humidity is not None
+        and DEFROST_T_MIN <= s.t_out <= DEFROST_T_MAX
+        and s.humidity >= DEFROST_HUMID
+    )
+
+
+@dataclass
+class DefrostClass:
+    t_low: float
+    t_high: float
+    humid: bool
+    run_hours: float
+    minutes_per_run_hour: float
+
+    @property
+    def label(self) -> str:
+        if self.t_low <= -30:
+            temp = f"onder {_fmt(self.t_high, 0)} °C"
+        elif self.t_high >= 40:
+            temp = f"vanaf {_fmt(self.t_low, 0)} °C"
+        else:
+            temp = f"{_fmt(self.t_low, 0)} tot {_fmt(self.t_high, 0)} °C"
+        return f"{temp}, {'vochtig' if self.humid else 'droog'}"
+
+
+def defrost_classes(samples: list[HourSample]) -> list[DefrostClass]:
+    """Minuten ontdooien per draaiuur, per klasse buitentemperatuur en vochtigheid."""
+    result: list[DefrostClass] = []
+    for lo, hi in DEFROST_BINS:
+        for humid in (True, False):
+            run = deice = 0.0
+            for s in samples:
+                if s.t_out is None or s.humidity is None or s.run_seconds <= 0:
+                    continue
+                if not lo <= s.t_out < hi or (s.humidity >= DEFROST_HUMID) != humid:
+                    continue
+                run += s.run_seconds
+                deice += s.deice_seconds
+            run_hours = run / 3600.0
+            if run_hours >= DEFROST_MIN_RUN_HOURS:
+                result.append(DefrostClass(lo, hi, humid, run_hours, deice / run_hours / 60.0))
+    return result
+
+
+@dataclass
+class DefrostPenalty:
+    penalty: float  # fractie COP die ontdooiweer kost
+    hours: int
+
+
+def defrost_penalty(samples: list[HourSample], mode: str, clean: CopFit | None) -> DefrostPenalty | None:
+    """COP-verlies bij ontdooiweer ten opzichte van de COP zonder ontdooien."""
+    if clean is None:
+        return None
+    actual = expected = 0.0
+    hours = 0
+    for s in samples:
+        if s.run_seconds <= 0 or not is_defrost_weather(s):
+            continue
+        pure = _pure_hour(s, mode)
+        if pure is None:
+            continue
+        heat, elec = pure
+        actual += heat
+        expected += elec * clean.at(s.t_out or 0.0)
+        hours += 1
+    if hours == 0 or expected <= 0:
+        return None
+    return DefrostPenalty(penalty=max(0.0, min(0.8, 1.0 - actual / expected)), hours=hours)
+
+
+def _defrost_proposal(
+    found: DefrostPenalty | None, current: float, key: str, name: str, where: str
+) -> dict[str, Any] | None:
+    if found is None or found.hours < DEFROST_MIN_PENALTY_HOURS:
+        return None
+    if abs(found.penalty - current) < 0.08:
+        return None
+    return {
+        "id": key,
+        "onderwerp": f"Ontdooistraf {name}",
+        "nu": f"{round(current * 100)}%",
+        "voorstel": f"{round(found.penalty * 100)}%",
+        "reden": (
+            f"Gemeten over {found.hours} uur met {_fmt(DEFROST_T_MIN, 0)} tot {_fmt(DEFROST_T_MAX, 0)} °C "
+            f"en luchtvochtigheid vanaf {round(DEFROST_HUMID)}%: de COP lag "
+            f"{round(found.penalty * 100)}% onder die van uren zonder ontdooien. {where}"
+        ),
+        "zekerheid": _confidence(found.hours, 20, 60),
+    }
+
+
 def _confidence(amount: float, low: float, high: float) -> str:
     return "hoog" if amount >= high else ("middel" if amount >= low else "laag")
 
@@ -422,12 +581,29 @@ def voorstellen(
     laden_kwh_per_hour: float | None,
     laden_hours: int,
     settings: dict[str, float | None],
+    defrost_heat: DefrostPenalty | None = None,
+    defrost_dhw: DefrostPenalty | None = None,
 ) -> list[dict[str, Any]]:
     """Voorstellen ten opzichte van wat nu ingesteld is (settings uit Home Assistant)."""
     result: list[dict[str, Any]] = []
+    current_dhw_defrost = settings.get("ontdooicorrectie_ww")
     for p in (
         _cop_proposal(cop_heat, CURRENT_FLOOR_COP, "cop_vloerbuffer", "vloerbuffer"),
         _cop_proposal(cop_dhw, CURRENT_DHW_COP, "cop_warm_water", "warm water"),
+        _defrost_proposal(
+            defrost_heat,
+            CURRENT_DEFROST_FLOOR,
+            "ontdooistraf_vloer",
+            "vloer vooruit laden",
+            "Dit bepaalt of de vloer de avond ervoor al geladen wordt.",
+        ),
+        _defrost_proposal(
+            defrost_dhw,
+            CURRENT_DEFROST_DHW if current_dhw_defrost is None else current_dhw_defrost / 100.0,
+            "ontdooistraf_warm_water",
+            "warm water",
+            "Dit is input_number.warm_water_ontdooicorrectie (middag of nacht laden).",
+        ),
     ):
         if p:
             result.append(p)
@@ -494,6 +670,12 @@ class HeatLearner:
         cop_dhw = fit_cop(self.samples, "warm_water")
         room = fit_room(self.samples)
         tank = fit_tank(self.samples)
+        pen_heat = defrost_penalty(
+            self.samples, "verwarming", fit_cop(self.samples, "verwarming", without_deice=True)
+        )
+        pen_dhw = defrost_penalty(
+            self.samples, "warm_water", fit_cop(self.samples, "warm_water", without_deice=True)
+        )
         laden = [s for s in self.samples if s.laden_seconds >= 1800 and not s.stove]
         laden_kwh = sum(s.heat_yield_kwh for s in laden) / len(laden) if laden else None
 
@@ -539,7 +721,26 @@ class HeatLearner:
             "uren": len(laden),
             "kwh_warmte_per_uur": None if laden_kwh is None else round(laden_kwh, 2),
         }
-        info["voorstellen"] = voorstellen(cop_heat, cop_dhw, room, tank, laden_kwh, len(laden), settings)
+        risk = [s for s in self.samples if s.run_seconds > 0 and is_defrost_weather(s)]
+        risk_run = sum(s.run_seconds for s in risk)
+        risk_deice = sum(s.deice_seconds for s in risk)
+        enough = risk_run >= DEFROST_MIN_RUN_HOURS * 3600
+        info["ontdooien"] = {
+            "uren_ontdooiweer": len(risk),
+            "minuten_per_draaiuur_bij_ontdooiweer": round(risk_deice / risk_run * 60, 1) if enough else None,
+            "cop_straf_verwarming": None if pen_heat is None else round(pen_heat.penalty, 2),
+            "cop_straf_warm_water": None if pen_dhw is None else round(pen_dhw.penalty, 2),
+            "per_klasse": {
+                c.label: {
+                    "minuten_per_draaiuur": round(c.minutes_per_run_hour, 1),
+                    "draaiuren": round(c.run_hours, 1),
+                }
+                for c in defrost_classes(self.samples)
+            },
+        }
+        info["voorstellen"] = voorstellen(
+            cop_heat, cop_dhw, room, tank, laden_kwh, len(laden), settings, pen_heat, pen_dhw
+        )
         return info
 
     def to_dict(self) -> dict[str, Any]:

@@ -9,6 +9,8 @@ from custom_components.hems_batterij.warmte_leren import (
     HourAccumulator,
     HourSample,
     Readings,
+    defrost_classes,
+    defrost_penalty,
     fit_cop,
     fit_room,
     fit_tank,
@@ -190,3 +192,71 @@ def test_learner_keeps_only_recent_hours() -> None:
     for i in range(721):
         learner.add(T0 + timedelta(seconds=5 * i), 5.0 if i else 0.0, Readings(room=20.0))
     assert [s.start for s in learner.samples] == [T0]
+
+
+def test_accumulator_counts_defrost_and_weather() -> None:
+    acc = HourAccumulator()
+    done = None
+    for i in range(721):
+        now = T0 + timedelta(seconds=5 * i)
+        status = "deicing_active" if i < 120 else ("heat_compressor_active" if i < 600 else "standby")
+        r = Readings(
+            t_out=2.0, heat_w=800.0, yield_kw=-1.0 if i < 120 else 3.0, status=status, humidity=95.0, wind=8.0
+        )
+        done = acc.add(now, 5.0 if i else 0.0, r) or done
+    assert done is not None
+    assert abs(done.deice_seconds - 595) < 10  # eerste 10 minuten
+    assert abs(done.run_seconds - 2995) < 10  # 50 minuten compressor
+    assert done.humidity == 95.0 and done.wind == 8.0
+    again = HourSample.from_list(done.to_list())
+    assert again is not None and again.deice_seconds == round(done.deice_seconds)
+    assert again.humidity == 95.0
+
+
+def test_old_samples_without_defrost_still_load() -> None:
+    old = HourSample(start=T0, seconds=3600.0).to_list()[:16]
+    s = HourSample.from_list(old)
+    assert s is not None and s.run_seconds == 0.0 and s.humidity is None
+
+
+def _defrost_samples() -> list[HourSample]:
+    """Droge uren COP 3,2 + 0,1 x T zonder ontdooien; vochtige -2 tot 5 °C uren 40% lager."""
+    samples = []
+    for i in range(120):
+        t = -2.0 + (i % 12)  # -2 .. 9 °C
+        humid = i % 2 == 0
+        defrost = humid and -2 <= t <= 5
+        cop = (3.2 + 0.1 * t) * (0.6 if defrost else 1.0)
+        samples.append(
+            HourSample(
+                start=T0 + timedelta(hours=i),
+                seconds=3600.0,
+                t_out=t,
+                heat_elec_kwh=1.0,
+                heat_yield_kwh=cop,
+                run_seconds=3600.0,
+                deice_seconds=600.0 if defrost else 0.0,
+                humidity=95.0 if humid else 70.0,
+            )
+        )
+    return samples
+
+
+def test_defrost_penalty_and_classes() -> None:
+    samples = _defrost_samples()
+    clean = fit_cop(samples, "verwarming", without_deice=True)
+    assert clean is not None and abs(clean.at(2.0) - 3.4) < 0.05
+    pen = defrost_penalty(samples, "verwarming", clean)
+    assert pen is not None and abs(pen.penalty - 0.40) < 0.02 and pen.hours >= 30
+    classes = {c.label: c for c in defrost_classes(samples)}
+    assert abs(classes["1 tot 3 °C, vochtig"].minutes_per_run_hour - 10.0) < 0.01
+    assert classes["1 tot 3 °C, droog"].minutes_per_run_hour == 0.0
+
+
+def test_defrost_proposal_in_summary() -> None:
+    learner = HeatLearner(samples=_defrost_samples())
+    info = learner.summary({"voorsprong": None, "ontdooicorrectie_ww": 10.0})
+    assert info["ontdooien"]["cop_straf_verwarming"] == 0.4
+    ids = {p["id"]: p for p in info["voorstellen"]}
+    assert ids["ontdooistraf_vloer"]["voorstel"] == "40%"
+    assert "ontdooistraf_warm_water" not in ids  # geen warm-wateruren gemeten
