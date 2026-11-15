@@ -265,7 +265,8 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         self._baseline_today = 0.0
         self._saving_total = 0.0
         self._saving_since: datetime | None = None
-        self._last_price_count = -1
+        # Laatste eindtijd van de bekende Zonneplan-prijzen: alleen als die verder komt, opnieuw plannen.
+        self._last_price_end: datetime | None = None
         # Prijsvoorspelling voor de dagen na de bekende prijzen, en hoe goed die tot nu toe was.
         self._forecast_points: list[ForecastPoint] = []
         self._forecast_fetched: datetime | None = None
@@ -991,10 +992,16 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
     @callback
     def _async_price_changed(self, event: Event) -> None:
         new_state: State | None = event.data.get("new_state")
-        count = len(new_state.attributes.get("forecast") or []) if new_state else 0
-        if count != self._last_price_count:
-            # Nieuwe prijzen (bijvoorbeeld die van morgen) binnen: opnieuw plannen.
-            self._last_price_count = count
+        slots = parse_zonneplan_forecast(new_state.attributes if new_state else None)
+        if not slots:
+            return
+        last_end = max(s.end for s in slots)
+        if self._last_price_end is None or last_end > self._last_price_end:
+            # Nieuwe prijzen (bijvoorbeeld die van morgen) binnen: opnieuw plannen. Zonneplan
+            # laat elk uur ook het verstreken uur vallen; dat is geen reden om midden in een
+            # kwartier opnieuw te plannen (dat gaf elk uur ~4 minuten zelfverbruik i.p.v.
+            # vasthouden, omdat een restkwartier van een paar minuten te klein is voor de planner).
+            self._last_price_end = last_end
             self.hass.async_create_task(self.async_replan("nieuwe prijzen"))
 
     async def _async_quarter_tick(self, now: datetime) -> None:
