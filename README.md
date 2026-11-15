@@ -115,7 +115,7 @@ VRC-voeler, vat, zon, vloerbuffermodus) en leert daaruit, over de laatste 45 dag
 - boven (v0.5.2): werkkamer en slaapkamer apart, hoe snel ze afkoelen, hoeveel ze opwarmen
   per kWh warmte en wat de houtkachel beneden er boven aan doet;
 - ontdooien (v0.5.1): per klasse buitentemperatuur en luchtvochtigheid (uit de
-  weersentiteit) hoeveel minuten per draaiuur de warmtepomp ontdooit, en hoeveel COP
+  SwitchBot-buitensensor, anders de weersentiteit) hoeveel minuten per draaiuur de warmtepomp ontdooit, en hoeveel COP
   ontdooiweer (-2 tot 5 °C, vochtigheid vanaf 90%) kost ten opzichte van uren zonder ontdooien.
 
 Uit het geleerde maakt het voorstellen ten opzichte van wat nu in de automatiseringen staat

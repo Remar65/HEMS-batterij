@@ -49,6 +49,7 @@ from .const import (
     CONF_INVESTMENT_EUR,
     CONF_LEARN_DHW_DEFROST,
     CONF_LEARN_FLOOR_MODE,
+    CONF_LEARN_HUMIDITY,
     CONF_LEARN_KITCHEN,
     CONF_LEARN_LEAD,
     CONF_LEARN_OUTDOOR,
@@ -1328,6 +1329,9 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         status = self._state(self._conf(CONF_LEARN_STATUS))
         mode = self._state(self._conf(CONF_LEARN_FLOOR_MODE))
         weather = self._state(self._conf(CONF_LEARN_WEATHER))
+        humidity = _float_state(self._state(self._conf(CONF_LEARN_HUMIDITY)))
+        if humidity is not None and not 0 <= humidity <= 100:
+            humidity = None
         readings = Readings(
             t_out=temp(CONF_LEARN_OUTDOOR),
             room=temp(CONF_LEARN_ROOM),
@@ -1340,7 +1344,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             pv_w=pv_w,
             tank=temp(CONF_LEARN_TANK),
             laden=bool(mode and mode.state == "laden"),
-            humidity=_float_attr(weather, "humidity"),
+            humidity=humidity if humidity is not None else _float_attr(weather, "humidity"),
             wind=_float_attr(weather, "wind_speed"),
             up1=temp(CONF_LEARN_UP1),
             up2=temp(CONF_LEARN_UP2),
