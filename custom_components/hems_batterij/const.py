@@ -57,6 +57,8 @@ CONF_LEARN_FLOOR_MODE = "learn_floor_mode"
 CONF_LEARN_LEAD = "learn_lead"
 CONF_LEARN_WEATHER = "learn_weather"
 CONF_LEARN_DHW_DEFROST = "learn_dhw_defrost"
+CONF_LEARN_UP1 = "learn_up1"
+CONF_LEARN_UP2 = "learn_up2"
 
 DEFAULTS = {
     CONF_P1_POWER: "sensor.p1_meter_power",
@@ -117,6 +119,8 @@ DEFAULTS = {
     CONF_LEARN_LEAD: "input_number.vloerbuffer_voorsprong_naverwarming",
     CONF_LEARN_WEATHER: "weather.forecast_thuis",
     CONF_LEARN_DHW_DEFROST: "input_number.warm_water_ontdooicorrectie",
+    CONF_LEARN_UP1: "sensor.sonoff_snzb_02d_temperatuur",  # werkkamer
+    CONF_LEARN_UP2: "sensor.sonoff_snzb_02d_temperatuur_2",  # slaapkamer
     CONF_PRICE_FORECAST_URL: "https://epexpredictor.batzill.com/prices_short?region=NL&unit=EUR_PER_KWH&hours=168",
     # Batterijen die HEMS zelf aanstuurt (leeg = alleen meekijken). Marco, 17 okt 2026:
     # eerst alleen de M2; de M1 blijft bij HBC.

@@ -112,6 +112,8 @@ VRC-voeler, vat, zon, vloerbuffermodus) en leert daaruit, over de laatste 45 dag
   (VRC-voeler meer dan 1 graad warmer dan de keuken) tellen niet mee;
 - het vat: afkoeling per uur buiten laden en tappen, kWh stroom per graad, en op welke uren er
   getapt wordt;
+- boven (v0.5.2): werkkamer en slaapkamer apart, hoe snel ze afkoelen, hoeveel ze opwarmen
+  per kWh warmte en wat de houtkachel beneden er boven aan doet;
 - ontdooien (v0.5.1): per klasse buitentemperatuur en luchtvochtigheid (uit de
   weersentiteit) hoeveel minuten per draaiuur de warmtepomp ontdooit, en hoeveel COP
   ontdooiweer (-2 tot 5 °C, vochtigheid vanaf 90%) kost ten opzichte van uren zonder ontdooien.
@@ -181,7 +183,7 @@ moment in het attribuut `beslislog` van de modus-sensor en in het HA-log.
 | Terugverdientijd | aanschafprijs ÷ gemeten besparing per jaar (pas zinvol na een paar weken) |
 | Rendement (gemeten) | gewogen round-trip-rendement en gebruikte slijtage |
 | Minimale spread nu | break-even prijsverschil voor laden uit het net, in ct |
-| Warmtemodel geleerd | uren gemeten; attributen: COP verwarming en warm water, huis, vat, laden, ontdooien |
+| Warmtemodel geleerd | uren gemeten; attributen: COP verwarming en warm water, huis, vat, laden, ontdooien, boven |
 | Warmte-voorstellen | aantal voorstellen; attribuut: de voorstellen met reden en zekerheid |
 | Meekijkmodus | aan zolang HEMS niets stuurt |
 | HEMS stuurt (schakelaar) | aan = de gekozen batterijen volgen HEMS; attributen: gestuurde batterijen, actief |

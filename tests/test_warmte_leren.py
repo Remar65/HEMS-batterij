@@ -14,6 +14,7 @@ from custom_components.hems_batterij.warmte_leren import (
     fit_cop,
     fit_room,
     fit_tank,
+    fit_upstairs,
     voorstellen,
 )
 
@@ -260,3 +261,39 @@ def test_defrost_proposal_in_summary() -> None:
     ids = {p["id"]: p for p in info["voorstellen"]}
     assert ids["ontdooistraf_vloer"]["voorstel"] == "40%"
     assert "ontdooistraf_warm_water" not in ids  # geen warm-wateruren gemeten
+
+
+def test_upstairs_room_is_learned() -> None:
+    """Werkkamer: koelt 3% van het verschil met buiten per uur af, 0,1 °C per kWh, kachel +0,2."""
+    rng = random.Random(3)
+    samples = []
+    up = 18.0
+    for i in range(150):
+        t_out = 4.0 + 3 * rng.random()
+        heat = rng.choice([0.0, 0.0, 2.0, 4.0])
+        prev = samples[-1].heat_yield_kwh if samples else 0.0
+        stove = rng.random() < 0.2
+        rise = 0.06 * heat + 0.04 * prev + (0.2 if stove else 0.0) - 0.03 * (up - t_out) + 0.1
+        samples.append(
+            HourSample(
+                start=T0 + timedelta(hours=i),
+                seconds=3600.0,
+                t_out=t_out,
+                heat_yield_kwh=heat,
+                stove=stove,
+                up1_start=up,
+                up1_end=up + rise,
+            )
+        )
+        up += rise
+    fit = fit_upstairs(samples, 1)
+    assert fit is not None
+    assert abs(fit.per_kwh - 0.10) < 0.01
+    assert abs(fit.stove - 0.2) < 0.02
+    assert abs(fit.cooling_per_hour(15.0) - 0.35) < 0.03
+    assert fit_upstairs(samples, 2) is None
+    again = HourSample.from_list(samples[0].to_list())
+    assert again is not None and again.up1_start == 18.0
+    info = HeatLearner(samples=samples).summary({})
+    assert info["boven_slaapkamer"] == "nog aan het leren"
+    assert info["boven_werkkamer"]["uren"] == 149

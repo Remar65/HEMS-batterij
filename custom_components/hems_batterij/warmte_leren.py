@@ -11,6 +11,9 @@ het huis en het boilervat deden en leert daaruit:
   verschil binnen-buiten. Daaruit volgen het warmteverlies (W per graad), hoeveel
   warmte een graad kost en hoeveel er na een laadbeurt nog naloopt. Uren met de
   houtkachel aan tellen niet mee.
+- Boven (werkkamer en slaapkamer, radiatoren op hetzelfde circuit): hoe snel die
+  kamers afkoelen, hoeveel ze opwarmen per kWh warmte en wat de houtkachel beneden
+  er boven aan doet.
 - Het boilervat: afkoeling per uur buiten laadbeurten en tappen, kWh stroom per graad
   opwarmen, en op welke uren er warm water getapt wordt.
 - Ontdooien: per klasse buitentemperatuur en luchtvochtigheid hoeveel minuten per
@@ -93,6 +96,10 @@ class HourSample:
     deice_seconds: float = 0.0
     humidity: float | None = None  # gemiddeld over het uur
     wind: float | None = None  # km/h, gemiddeld over het uur
+    up1_start: float | None = None  # boven kamer 1 (werkkamer)
+    up1_end: float | None = None
+    up2_start: float | None = None  # boven kamer 2 (slaapkamer)
+    up2_end: float | None = None
 
     def to_list(self) -> list[Any]:
         def r(x: float | None, d: int = 3) -> float | None:
@@ -119,12 +126,16 @@ class HourSample:
             round(self.deice_seconds),
             r(self.humidity, 1),
             r(self.wind, 1),
+            r(self.up1_start, 2),
+            r(self.up1_end, 2),
+            r(self.up2_start, 2),
+            r(self.up2_end, 2),
         ]
 
     @classmethod
     def from_list(cls, raw: Any) -> HourSample | None:
-        # 16 velden: opgeslagen door v0.5.0 (nog zonder ontdooien en weer).
-        if not isinstance(raw, list) or len(raw) not in (16, 20):
+        # 16 velden: v0.5.0 (nog zonder ontdooien en weer); 20: v0.5.1 (nog zonder boven).
+        if not isinstance(raw, list) or len(raw) not in (16, 20, 24):
             return None
         try:
             start = datetime.fromisoformat(raw[0])
@@ -154,10 +165,14 @@ class HourSample:
             tank_min=f(raw[13]),
             dhw_active=bool(raw[14]),
             laden_seconds=f(raw[15]) or 0.0,
-            run_seconds=(f(raw[16]) or 0.0) if len(raw) == 20 else 0.0,
-            deice_seconds=(f(raw[17]) or 0.0) if len(raw) == 20 else 0.0,
-            humidity=f(raw[18]) if len(raw) == 20 else None,
-            wind=f(raw[19]) if len(raw) == 20 else None,
+            run_seconds=(f(raw[16]) or 0.0) if len(raw) >= 20 else 0.0,
+            deice_seconds=(f(raw[17]) or 0.0) if len(raw) >= 20 else 0.0,
+            humidity=f(raw[18]) if len(raw) >= 20 else None,
+            wind=f(raw[19]) if len(raw) >= 20 else None,
+            up1_start=f(raw[20]) if len(raw) >= 24 else None,
+            up1_end=f(raw[21]) if len(raw) >= 24 else None,
+            up2_start=f(raw[22]) if len(raw) >= 24 else None,
+            up2_end=f(raw[23]) if len(raw) >= 24 else None,
         )
 
 
@@ -178,6 +193,8 @@ class Readings:
     laden: bool = False
     humidity: float | None = None
     wind: float | None = None
+    up1: float | None = None
+    up2: float | None = None
 
 
 class HourAccumulator:
@@ -208,6 +225,14 @@ class HourAccumulator:
             s.tank_start = r.tank
         if r.room is not None:
             s.room_end = r.room
+        if r.up1 is not None:
+            if s.up1_start is None:
+                s.up1_start = r.up1
+            s.up1_end = r.up1
+        if r.up2 is not None:
+            if s.up2_start is None:
+                s.up2_start = r.up2
+            s.up2_end = r.up2
         if r.tank is not None:
             s.tank_end = r.tank
             s.tank_min = r.tank if s.tank_min is None else min(s.tank_min, r.tank)
@@ -396,6 +421,50 @@ def fit_room(samples: list[HourSample]) -> RoomFit | None:
     ss_res = sum((y - p) ** 2 for p, y in zip(predicted, ys, strict=True))
     r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
     return RoomFit(c=(max(0.0, c0), c1, c2), sun=sun, loss=loss, base=base, rows=len(rows), r2=r2)
+
+
+@dataclass
+class UpstairsFit:
+    per_kwh: float  # graden per kWh warmte (dit en vorig uur samen)
+    loss: float  # fractie van (kamer - buiten) per uur
+    base: float  # vaste graden per uur
+    stove: float  # graden per uur extra als de kachel beneden brandt
+    rows: int
+    r2: float
+
+    def cooling_per_hour(self, diff: float) -> float:
+        """Afkoeling per uur zonder verwarming en zonder kachel bij dit verschil binnen-buiten."""
+        return self.loss * diff - self.base
+
+
+def fit_upstairs(samples: list[HourSample], room: int) -> UpstairsFit | None:
+    """Kamer boven: stijging per uur tegen warmte (dit + vorig uur), kachel en verschil met buiten."""
+    by_start = {s.start: s for s in samples}
+    rows: list[list[float]] = []
+    ys: list[float] = []
+    for s in samples:
+        start, end = (s.up1_start, s.up1_end) if room == 1 else (s.up2_start, s.up2_end)
+        p1 = by_start.get(s.start - timedelta(hours=1))
+        if start is None or end is None or s.t_out is None or p1 is None:
+            continue
+        rows.append([s.heat_yield_kwh, p1.heat_yield_kwh, float(s.stove), -(start - s.t_out), 1.0])
+        ys.append(end - start)
+    if len(rows) < ROOM_MIN_ROWS:
+        return None
+    coef = _least_squares(rows, ys)
+    if coef is None:
+        return None
+    c0, c1, stove, loss, base = coef
+    if loss <= 0:
+        return None
+    mean_y = sum(ys) / len(ys)
+    ss_tot = sum((y - mean_y) ** 2 for y in ys)
+    predicted = [sum(c * x for c, x in zip(coef, r, strict=True)) for r in rows]
+    ss_res = sum((y - p) ** 2 for p, y in zip(predicted, ys, strict=True))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    return UpstairsFit(
+        per_kwh=max(0.0, c0) + max(0.0, c1), loss=loss, base=base, stove=stove, rows=len(rows), r2=r2
+    )
 
 
 @dataclass
@@ -708,6 +777,18 @@ class HeatLearner:
                 "verklaarde_variatie": round(room.r2, 2),
                 "uren": room.rows,
             }
+        for key, idx in (("boven_werkkamer", 1), ("boven_slaapkamer", 2)):
+            up = fit_upstairs(self.samples, idx)
+            if up is None:
+                info[key] = "nog aan het leren"
+            else:
+                info[key] = {
+                    "afkoeling_per_uur_bij_15_graden_verschil": round(up.cooling_per_hour(15.0), 2),
+                    "graden_per_kwh_warmte": round(up.per_kwh, 3),
+                    "kachel_graden_per_uur": round(up.stove, 2),
+                    "verklaarde_variatie": round(up.r2, 2),
+                    "uren": up.rows,
+                }
         info["vat"] = {
             "afkoeling_per_uur_bij_50": None if tank.loss_at(50) is None else round(tank.loss_at(50), 2),
             "verlies_w_bij_50": None
