@@ -60,6 +60,9 @@ CONF_LEARN_DHW_DEFROST = "learn_dhw_defrost"
 CONF_LEARN_UP1 = "learn_up1"
 CONF_LEARN_UP2 = "learn_up2"
 CONF_LEARN_HUMIDITY = "learn_humidity"
+CONF_HEAT_PLAN = "heat_plan"
+CONF_HEAT_PLAN_CLIMATE = "heat_plan_climate"
+CONF_HEAT_PLAN_WIND = "heat_plan_wind_factor"
 
 DEFAULTS = {
     CONF_P1_POWER: "sensor.p1_meter_power",
@@ -124,6 +127,11 @@ DEFAULTS = {
     CONF_LEARN_UP2: "sensor.sonoff_snzb_02d_temperatuur_2",  # slaapkamer
     # Gemeten buitenluchtvochtigheid (SwitchBot); zonder meting die van de weersentiteit.
     CONF_LEARN_HUMIDITY: "sensor.indoor_outdoor_meter_2066_luchtvochtigheid",
+    # Warmteplanner: vooruit stoken rond dure uren (Marco koos "Planner in HEMS", 16 nov 2026).
+    # Alleen een advies; de vloerbuffer-automatisering beslist of ze het volgt.
+    CONF_HEAT_PLAN: True,
+    CONF_HEAT_PLAN_CLIMATE: "climate.my_home_zone_wonen_circuit_0_climate",
+    CONF_HEAT_PLAN_WIND: "input_number.vloerbuffer_windfactor",
     CONF_PRICE_FORECAST_URL: "https://epexpredictor.batzill.com/prices_short?region=NL&unit=EUR_PER_KWH&hours=168",
     # Batterijen die HEMS zelf aanstuurt (leeg = alleen meekijken). Marco, 17 okt 2026:
     # eerst alleen de M2; de M1 blijft bij HBC.
@@ -205,7 +213,8 @@ JEROEN_MCP_URL = "https://jeroen.nl/mcp"
 # Gratis voor niet-commercieel gebruik; wij vragen één keer per uur.
 OPEN_METEO_URL = (
     "https://api.open-meteo.com/v1/forecast?latitude={lat:.3f}&longitude={lon:.3f}"
-    "&hourly=temperature_2m&past_days=2&forecast_days=8&timezone=GMT&timeformat=unixtime"
+    "&hourly=temperature_2m,wind_speed_10m,relative_humidity_2m"
+    "&past_days=2&forecast_days=8&timezone=GMT&timeformat=unixtime"
 )
 DECISION_LOG_SIZE = 50
 

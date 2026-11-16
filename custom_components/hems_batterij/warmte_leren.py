@@ -70,6 +70,9 @@ COP_MIN_KWH = 8.0
 ROOM_MIN_ROWS = 96
 TANK_MIN_HOURS = 24
 LADEN_MIN_HOURS = 6
+# Warmteplanner: geleerd huismodel pas gebruiken bij deze verklaarde variatie.
+PLAN_MIN_R2 = 0.3
+PLAN_MIN_RUN_HOURS = 6
 
 
 @dataclass
@@ -823,6 +826,35 @@ class HeatLearner:
             cop_heat, cop_dhw, room, tank, laden_kwh, len(laden), settings, pen_heat, pen_dhw
         )
         return info
+
+    def planner_inputs(self) -> dict[str, Any]:
+        """Wat de warmteplanner van het geleerde kan gebruiken (alleen betrouwbare delen)."""
+        out: dict[str, Any] = {}
+        room = fit_room(self.samples)
+        if (
+            room is not None
+            and room.r2 >= PLAN_MIN_R2
+            and 1.0 <= room.kwh_per_degree <= 30.0
+            and 40.0 <= room.loss_w_per_k <= 300.0
+        ):
+            out["kwh_per_degree"] = room.kwh_per_degree
+            out["loss_w_per_k"] = room.loss_w_per_k
+            out["sun_deg_per_kwh"] = max(0.0, room.sun)
+            out["base_deg_per_hour"] = max(-0.2, min(0.2, room.base))
+        cop = fit_cop(self.samples, "verwarming", without_deice=True)
+        if cop is not None:
+            out["cop_a"], out["cop_b"] = cop.a, cop.b
+            pen = defrost_penalty(self.samples, "verwarming", cop)
+            if pen is not None and pen.hours >= DEFROST_MIN_PENALTY_HOURS:
+                out["defrost_penalty"] = pen.penalty
+        full = [
+            s.heat_yield_kwh
+            for s in self.samples
+            if s.run_seconds >= 3300 and not s.stove and not s.dhw_active and s.heat_yield_kwh > 0.5
+        ]
+        if len(full) >= PLAN_MIN_RUN_HOURS:
+            out["run_kwh_heat"] = sorted(full)[len(full) // 2]
+        return out
 
     def to_dict(self) -> dict[str, Any]:
         return {"samples": [s.to_list() for s in self.samples]}

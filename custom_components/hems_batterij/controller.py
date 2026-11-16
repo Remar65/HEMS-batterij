@@ -370,11 +370,7 @@ def force_charge_target(batteries: list[BatteryState], target_pct: float) -> Con
     Geeft None als er niets (meer) te laden valt: elke bruikbare batterij zit op het
     doel of op zijn eigen laadgrens.
     """
-    todo = [
-        b
-        for b in batteries
-        if b.usable and (b.soc_pct or 0.0) < min(target_pct, b.soc_max_pct) - 0.5
-    ]
+    todo = [b for b in batteries if b.usable and (b.soc_pct or 0.0) < min(target_pct, b.soc_max_pct) - 0.5]
     if not todo:
         return None
     power = sum(b.max_charge_w for b in todo)
@@ -385,7 +381,6 @@ def force_charge_target(batteries: list[BatteryState], target_pct: float) -> Con
         max_discharge_w=0.0,
         reason=f"handmatig laden tot {target_pct:.0f}% (knop Nu laden)",
     )
-
 
 
 def dhw_exclusion_w(

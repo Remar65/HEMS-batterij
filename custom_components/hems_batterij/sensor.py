@@ -252,6 +252,13 @@ SENSORS: tuple[HemsSensorDescription, ...] = (
         value_fn=lambda d: len(d.heat_learning["voorstellen"]) if "voorstellen" in d.heat_learning else None,
         attrs_fn=lambda d: {"voorstellen": d.heat_learning.get("voorstellen", [])},
     ),
+    HemsSensorDescription(
+        key="warmteplan",
+        translation_key="warmteplan",
+        icon="mdi:radiator",
+        value_fn=lambda d: d.heat_plan.get("advies"),
+        attrs_fn=lambda d: {k: v for k, v in d.heat_plan.items() if k != "advies"},
+    ),
 )
 
 

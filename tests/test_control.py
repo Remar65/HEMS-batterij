@@ -324,9 +324,7 @@ async def test_hot_water_run_comes_from_the_grid_not_the_battery(hass: HomeAssis
         )
 
     # Nu zelfverbruik bij 32 ct, straks verkopen bij 44 ct.
-    coordinator._plan = Plan(
-        created=now, steps=[step(-1, 0.324, 0.0), step(150, 0.441, 1.17, MODE_SELL)]
-    )
+    coordinator._plan = Plan(created=now, steps=[step(-1, 0.324, 0.0), step(150, 0.441, 1.17, MODE_SELL)])
 
     # Zonder warmwaterrun dekt de batterij de hele 2000 W.
     await coordinator._async_fast_tick(None)

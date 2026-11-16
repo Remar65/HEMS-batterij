@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 import logging
 from typing import Any
 
@@ -44,6 +44,9 @@ from .const import (
     CONF_FEED_IN_COST_CT,
     CONF_HEAT_FORECAST,
     CONF_HEAT_LEARNING,
+    CONF_HEAT_PLAN,
+    CONF_HEAT_PLAN_CLIMATE,
+    CONF_HEAT_PLAN_WIND,
     CONF_HEAT_POWER,
     CONF_HELIOS_ENTITIES,
     CONF_INVESTMENT_EUR,
@@ -152,6 +155,7 @@ from .pv_correction import PvHourCorrection
 from .shadow import ShadowBattery
 from .shadow_hbc import HbcTargets, hbc_counteracts, hbc_step
 from .warmte_leren import HeatLearner, Readings
+from .warmteplanner import HeatHour, HouseParams, make_heat_plan, setpoint_at, summary as heat_plan_summary
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -197,6 +201,7 @@ class HemsData:
     price_forecast: dict[str, Any] = field(default_factory=dict)
     heat_forecast: dict[str, Any] = field(default_factory=dict)
     heat_learning: dict[str, Any] = field(default_factory=dict)
+    heat_plan: dict[str, Any] = field(default_factory=dict)
     control_active: bool = False
     controlled: list[str] = field(default_factory=list)
     commands: dict[str, Command] = field(default_factory=dict)
@@ -207,6 +212,7 @@ class HemsData:
 
 # Minder dan dit (kWh per kwartier) telt niet als gepland ontladen.
 _MIN_PLANNED_DISCHARGE_KWH = 0.03
+
 
 def _target(step: PlanStep | None) -> ControlTarget | None:
     if step is None:
@@ -277,6 +283,8 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         # Verwarming apart: kWh per dag tegen de buitentemperatuur, en per uur van de dag.
         self.heat_model = HeatModel()
         self._temps: dict[datetime, float] = {}
+        self._wind: dict[datetime, float] = {}
+        self._humid: dict[datetime, float] = {}
         self._weather_fetched: datetime | None = None
         self._weather_error: str | None = None
         self._heat_day: date | None = None
@@ -709,15 +717,16 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             self._pv_hour_seconds += dt
 
     async def _async_fetch_weather(self, now: datetime) -> None:
-        """Uurtemperatuur ophalen (elk uur) voor de verwachte stroom voor verwarming."""
-        if not self._conf(CONF_HEAT_FORECAST):
+        """Uurweer ophalen (elk uur) voor de verwachte verwarming en de warmteplanner."""
+        if not self._conf(CONF_HEAT_FORECAST) and not self._conf(CONF_HEAT_PLAN):
             return
         url = OPEN_METEO_URL.format(lat=self.hass.config.latitude, lon=self.hass.config.longitude)
         try:
             session = async_get_clientsession(self.hass)
             async with asyncio.timeout(PRICE_FORECAST_TIMEOUT_SECONDS), session.get(url) as response:
                 response.raise_for_status()
-                temps = parse_open_meteo(await response.json(content_type=None))
+                payload = await response.json(content_type=None)
+                temps = parse_open_meteo(payload)
         except Exception as err:  # noqa: BLE001 - zonder nieuw weer gewoon verder met het oude
             if self._weather_error is None:
                 self._add_log(now, "info", f"weersverwachting niet opgehaald: {err}")
@@ -732,6 +741,8 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         horizon = now - timedelta(days=3)
         self._temps = {t: v for t, v in self._temps.items() if t >= horizon}
         self._temps.update(temps)
+        self._wind = parse_open_meteo(payload, "wind_speed_10m")
+        self._humid = parse_open_meteo(payload, "relative_humidity_2m")
 
     async def _async_fetch_forecast(self, now: datetime) -> None:
         """Haal de prijsvoorspelling op (elk uur) en leer van eerdere voorspellingen.
@@ -837,7 +848,11 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         return load
 
     def _forecast_slots(
-        self, prices: list[PriceSlot], now: datetime, netting_end: datetime, feed_in_cost: float,
+        self,
+        prices: list[PriceSlot],
+        now: datetime,
+        netting_end: datetime,
+        feed_in_cost: float,
         pv_periods: list[PvPeriod],
     ) -> list[PlanSlot]:
         """Uurblokken met (gedempte) voorspelde prijzen na de bekende prijzen."""
@@ -969,6 +984,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             make_plan, slots, model, soc_now, now, PLAN_STEP_KWH, priorities
         )
         self._plan = plan
+        await self._async_heat_plan(now, slots)
         if self.control_active:
             # Bij echt sturen volgt de schaduw HBC; daar hoort geen tweede HEMS-plan bij.
             self._shadow_plan = None
@@ -988,6 +1004,86 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
             f"nieuw plan ({trigger}): {len(plan.steps)} kwartieren, verwachte besparing "
             f"€{saving:.2f}, zon: {self.data.pv_source}; nu: {first.reason if first else '-'}",
         )
+
+    def _hour_value(self, series: dict[datetime, float], moment: datetime) -> float | None:
+        key = moment.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
+        return series.get(key)
+
+    def _heat_params(self) -> HouseParams:
+        learned = self.heat_learner.planner_inputs() if self._conf(CONF_HEAT_LEARNING) else {}
+        wind = _float_state(self._state(self._conf(CONF_HEAT_PLAN_WIND)))
+        kwargs: dict[str, Any] = {k: v for k, v in learned.items() if v is not None}
+        if wind is not None and 0 <= wind <= 1:
+            kwargs["wind_factor"] = wind
+        parts = sorted(
+            {
+                "huis" if "loss_w_per_k" in learned else "",
+                "cop" if "cop_a" in learned else "",
+                "draaiuur" if "run_kwh_heat" in learned else "",
+            }
+            - {""}
+        )
+        kwargs["source"] = "geleerd: " + ", ".join(parts) if parts else "standaard"
+        return HouseParams(**kwargs)
+
+    async def _async_heat_plan(self, now: datetime, slots: list[PlanSlot]) -> None:
+        """Warmteplan per uur: wanneer stoken het goedkoopst is. Alleen advies, stuurt niets."""
+        if not self._conf(CONF_HEAT_PLAN):
+            self.data.heat_plan = {}
+            return
+        room = _float_state(self._state(self._conf(CONF_LEARN_ROOM)))
+        if room is None or not -10 < room < 40:
+            self.data.heat_plan = {"advies": "geen plan", "reden": "geen kamertemperatuur"}
+            return
+        climate = self._state(self._conf(CONF_HEAT_PLAN_CLIMATE))
+        program = climate.attributes.get("time_program_heating") if climate else None
+        t_now = _float_state(self._state(self._conf(CONF_LEARN_OUTDOOR)))
+        # Kwartierprijzen per uur middelen (gewogen naar duur).
+        by_hour: dict[datetime, list[Any]] = {}
+        for slot in slots:
+            hour = slot.start.replace(minute=0, second=0, microsecond=0)
+            secs = (slot.end - slot.start).total_seconds()
+            entry = by_hour.setdefault(hour, [0.0, 0.0, 0.0, False])
+            entry[0] += slot.buy * secs
+            entry[1] += secs
+            entry[2] += slot.pv_kwh
+            entry[3] = entry[3] or slot.forecast
+        hours: list[HeatHour] = []
+        default_sp = setpoint_at(program, now, 20.0)
+        for hour in sorted(by_hour):
+            price_secs, secs, pv, forecast = by_hour[hour]
+            if secs <= 0:
+                continue
+            t_out = self._hour_value(self._temps, hour)
+            if t_out is None:
+                t_out = t_now
+            if t_out is None:
+                break  # zonder buitentemperatuur geen zinnige planning meer
+            hours.append(
+                HeatHour(
+                    start=hour,
+                    price=price_secs / secs,
+                    t_out=t_out,
+                    setpoint=setpoint_at(program, hour + timedelta(minutes=30), default_sp),
+                    wind=self._hour_value(self._wind, hour) or 0.0,
+                    humidity=self._hour_value(self._humid, hour),
+                    pv_kwh=pv,
+                    forecast=bool(forecast),
+                )
+            )
+        if not hours:
+            self.data.heat_plan = {"advies": "geen plan", "reden": "geen prijzen of weer"}
+            return
+        params = self._heat_params()
+        status = self._state(self._conf(CONF_LEARN_STATUS))
+        running = bool(status and status.state == "heat_compressor_active")
+        plan = await self.hass.async_add_executor_job(make_heat_plan, hours, params, room, running)
+        info = heat_plan_summary(plan, params, room)
+        vrc = _float_state(self._state(self._conf(CONF_LEARN_VRC_ROOM)))
+        kitchen = _float_state(self._state(self._conf(CONF_LEARN_KITCHEN)))
+        info["kachel"] = vrc is not None and kitchen is not None and vrc - kitchen > 1.0
+        info["berekend"] = now.isoformat()
+        self.data.heat_plan = info
 
     @callback
     def _async_price_changed(self, event: Event) -> None:
@@ -1185,9 +1281,7 @@ class HemsCoordinator(DataUpdateCoordinator[HemsData]):
         if self._plan is None:
             return None
         prices = [
-            s.buy
-            for s in self._plan.steps
-            if s.start > now and s.battery_ac_kwh > _MIN_PLANNED_DISCHARGE_KWH
+            s.buy for s in self._plan.steps if s.start > now and s.battery_ac_kwh > _MIN_PLANNED_DISCHARGE_KWH
         ]
         return max(prices) if prices else None
 
