@@ -284,7 +284,7 @@ class ForecastSkill:
                 [round(v, 5), round(band[0], 5), round(band[1], 5)] if band else round(v, 5)
             )
         self.snapshots[key] = snapshot
-        for old in sorted(self.snapshots)[:-(MAX_LEAD_DAYS + 2)]:
+        for old in sorted(self.snapshots)[: -(MAX_LEAD_DAYS + 2)]:
             del self.snapshots[old]
         self.scored = {s for s in self.scored if s.split("|")[0] in self.snapshots}
 

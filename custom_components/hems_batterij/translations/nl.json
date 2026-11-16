@@ -114,6 +114,9 @@
       },
       "warmte_voorstellen": {
         "name": "Warmte-voorstellen"
+      },
+      "warmteplan": {
+        "name": "Warmteplan"
       }
     },
     "binary_sensor": {

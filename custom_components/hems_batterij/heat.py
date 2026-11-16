@@ -29,14 +29,18 @@ COLD_BELOW = 6.0
 _SHAPE_ALPHA = 0.15
 
 
-def parse_open_meteo(payload: Any) -> dict[datetime, float]:
-    """Open-Meteo `hourly=temperature_2m&timeformat=unixtime`: {uur-start UTC: °C}."""
+def parse_open_meteo(payload: Any, key: str = "temperature_2m") -> dict[datetime, float]:
+    """Open-Meteo `hourly=temperature_2m&timeformat=unixtime`: {uur-start UTC: waarde}.
+
+    Met `key` een andere reeks uit dezelfde aanvraag (wind_speed_10m in km/u,
+    relative_humidity_2m in %).
+    """
     if not isinstance(payload, dict):
         return {}
     hourly = payload.get("hourly")
     if not isinstance(hourly, dict):
         return {}
-    times, temps = hourly.get("time"), hourly.get("temperature_2m")
+    times, temps = hourly.get("time"), hourly.get(key)
     if not isinstance(times, list) or not isinstance(temps, list):
         return {}
     result: dict[datetime, float] = {}

@@ -38,7 +38,12 @@ def test_parse_epexpredictor():
 
 
 _JEROEN_COLUMNS = [
-    "time_local", "known_market_price", "forecast_p10", "forecast_p50", "forecast_p90", "time_utc"
+    "time_local",
+    "known_market_price",
+    "forecast_p10",
+    "forecast_p50",
+    "forecast_p90",
+    "time_utc",
 ]
 
 
