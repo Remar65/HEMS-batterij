@@ -140,5 +140,25 @@
         "name": "Nu laden tot"
       }
     }
+  },
+  "services": {
+    "meetdata_exporteren": {
+      "name": "Meetdata verwarming exporteren",
+      "description": "Geeft de kwartierregels van de meetlogger verwarming terug (standaard de laatste 7 dagen).",
+      "fields": {
+        "start": {
+          "name": "Start",
+          "description": "Vanaf dit moment (lokale tijd)."
+        },
+        "einde": {
+          "name": "Einde",
+          "description": "Tot dit moment; standaard nu."
+        },
+        "kolommen": {
+          "name": "Kolommen",
+          "description": "Alleen deze kolommen; leeg = alles."
+        }
+      }
+    }
   }
 }
