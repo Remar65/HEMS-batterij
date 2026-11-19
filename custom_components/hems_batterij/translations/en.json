@@ -140,5 +140,25 @@
         "name": "Charge now up to"
       }
     }
+  },
+  "services": {
+    "meetdata_exporteren": {
+      "name": "Export heating measurements",
+      "description": "Returns the quarter-hour rows of the heating measurement logger (default: last 7 days).",
+      "fields": {
+        "start": {
+          "name": "Start",
+          "description": "From this moment (local time)."
+        },
+        "einde": {
+          "name": "End",
+          "description": "Until this moment; default now."
+        },
+        "kolommen": {
+          "name": "Columns",
+          "description": "Only these columns; empty = all."
+        }
+      }
+    }
   }
 }

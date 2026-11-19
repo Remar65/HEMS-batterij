@@ -1,0 +1,15 @@
+meetdata_exporteren:
+  fields:
+    start:
+      example: "2026-11-19 00:00:00"
+      selector:
+        datetime:
+    einde:
+      example: "2026-11-26 00:00:00"
+      selector:
+        datetime:
+    kolommen:
+      example: "buiten_gem_c, woonkamer_c, aanvoer_c, stooklijn"
+      selector:
+        text:
+          multiple: true
