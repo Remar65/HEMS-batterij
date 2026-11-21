@@ -268,6 +268,8 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     entities: list[SensorEntity] = [HemsSensor(coordinator, d) for d in SENSORS]
     entities.extend(HemsBatterySetpoint(coordinator, p) for p in coordinator.battery_prefixes)
+    if getattr(coordinator, "room_influence", None) is not None:
+        entities.append(HemsRoomInfluenceAdvice(coordinator))
     async_add_entities(entities)
 
 
@@ -334,3 +336,25 @@ class HemsBatterySetpoint(CoordinatorEntity[HemsCoordinator], SensorEntity):
             "gestuurd_door_hems": self._prefix in data.controlled,
             "opdracht": f"{command.mode} {command.power_w} W" if command else None,
         }
+
+
+class HemsRoomInfluenceAdvice(CoordinatorEntity[HemsCoordinator], SensorEntity):
+    """Advies voor de ruimte-invloed van de VRC: actief of uitgebreid (zie ruimte_invloed.py)."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "ruimte_invloed_advies"
+    _attr_icon = "mdi:home-thermometer-outline"
+    _unrecorded_attributes = frozenset({"recente_blokken", "basis"})
+
+    def __init__(self, coordinator: HemsCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_ruimte_invloed_advies"
+        self._attr_device_info = device_info(coordinator)
+
+    @property
+    def native_value(self) -> str | None:
+        return self.coordinator.room_influence.data.get("advies")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {k: v for k, v in self.coordinator.room_influence.data.items() if k != "advies"}

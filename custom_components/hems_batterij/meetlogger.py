@@ -55,7 +55,6 @@ COLUMNS: tuple[Column, ...] = (
     Column("keuken_c", "sensor.keuken_temperatuur"),
     Column("werkkamer_c", "sensor.sonoff_snzb_02d_temperatuur"),
     Column("slaapkamer_c", "sensor.sonoff_snzb_02d_temperatuur_2"),
-    Column("cv_hok_c", "sensor.cv_hok_temperatuur"),
     Column("woonkamer_rv_pct", "sensor.heating_ebusd_basv2_z1roomhumidity"),
     # instellingen
     Column("vrc_modus", "climate.my_home_zone_wonen_circuit_0_climate", None, numeric=False),
@@ -91,6 +90,8 @@ COLUMNS: tuple[Column, ...] = (
     # context
     Column("prijs_eur_kwh", "sensor.zonneplan_current_quarter_hourly_electricity_tariff"),
     Column("warmteplan", "sensor.hems_batterij_warmteplan", None, numeric=False),
+    # houtkachel (sensor op de muur naast de rookgaspijp, sinds 21-11-2026; was cv-hok)
+    Column("kachel_c", "sensor.kachel_temperatuur"),
 )
 
 HEADER: tuple[str, ...] = ("tijd", *(c.name for c in COLUMNS))

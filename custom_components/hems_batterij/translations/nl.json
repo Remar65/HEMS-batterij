@@ -117,6 +117,9 @@
       },
       "warmteplan": {
         "name": "Warmteplan"
+      },
+      "ruimte_invloed_advies": {
+        "name": "Ruimte-invloed advies"
       }
     },
     "binary_sensor": {
@@ -133,6 +136,9 @@
       },
       "nu_laden": {
         "name": "Nu laden"
+      },
+      "ruimte_invloed_automatisch": {
+        "name": "Ruimte-invloed automatisch"
       }
     },
     "number": {
