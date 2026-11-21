@@ -25,7 +25,11 @@ from .sensor import device_info
 async def async_setup_entry(
     hass: HomeAssistant, entry: HemsConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
-    async_add_entities([HemsControlSwitch(entry.runtime_data), HemsForceChargeSwitch(entry.runtime_data)])
+    coordinator = entry.runtime_data
+    entities: list[SwitchEntity] = [HemsControlSwitch(coordinator), HemsForceChargeSwitch(coordinator)]
+    if getattr(coordinator, "room_influence", None) is not None:
+        entities.append(HemsRoomInfluenceAutoSwitch(coordinator))
+    async_add_entities(entities)
 
 
 class HemsControlSwitch(CoordinatorEntity[HemsCoordinator], SwitchEntity, RestoreEntity):
@@ -94,4 +98,39 @@ class HemsForceChargeSwitch(CoordinatorEntity[HemsCoordinator], SwitchEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self.coordinator.async_set_force_charge(False)
+        self.async_write_ha_state()
+
+
+class HemsRoomInfluenceAutoSwitch(CoordinatorEntity[HemsCoordinator], SwitchEntity, RestoreEntity):
+    """Schakelaar "Ruimte-invloed automatisch": HEMS zet Actief/Uitgebreid zelf via ebusd.
+
+    Staat standaard uit; dan geeft HEMS alleen advies en een melding. De stand blijft
+    bewaard over een herstart heen.
+    """
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "ruimte_invloed_automatisch"
+    _attr_icon = "mdi:home-thermometer"
+
+    def __init__(self, coordinator: HemsCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_ruimte_invloed_automatisch"
+        self._attr_device_info = device_info(coordinator)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is not None and last.state == STATE_ON:
+            self.coordinator.room_influence.auto_enabled = True
+
+    @property
+    def is_on(self) -> bool:
+        return self.coordinator.room_influence.auto_enabled
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        self.coordinator.room_influence.auto_enabled = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        self.coordinator.room_influence.auto_enabled = False
         self.async_write_ha_state()
