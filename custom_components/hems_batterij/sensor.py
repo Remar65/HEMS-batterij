@@ -12,7 +12,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, UnitOfEnergy, UnitOfPower
+from homeassistant.const import PERCENTAGE, UnitOfEnergy, UnitOfPower, UnitOfVolumeFlowRate
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -270,6 +270,8 @@ async def async_setup_entry(
     entities.extend(HemsBatterySetpoint(coordinator, p) for p in coordinator.battery_prefixes)
     if getattr(coordinator, "room_influence", None) is not None:
         entities.append(HemsRoomInfluenceAdvice(coordinator))
+    if getattr(coordinator, "heating_flow", None) is not None:
+        entities.append(HemsHeatingFlow(coordinator))
     async_add_entities(entities)
 
 
@@ -358,3 +360,27 @@ class HemsRoomInfluenceAdvice(CoordinatorEntity[HemsCoordinator], SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {k: v for k, v in self.coordinator.room_influence.data.items() if k != "advies"}
+
+
+class HemsHeatingFlow(SensorEntity):
+    """Debiet van het verwarmingswater in l/h, door HEMS bij ebusd opgevraagd (zie ebus_debiet.py)."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "debiet_verwarming"
+    _attr_icon = "mdi:water-pump"
+    _attr_should_poll = False
+    _attr_device_class = SensorDeviceClass.VOLUME_FLOW_RATE
+    _attr_native_unit_of_measurement = UnitOfVolumeFlowRate.LITERS_PER_HOUR
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: HemsCoordinator) -> None:
+        self._flow = coordinator.heating_flow
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_debiet_verwarming"
+        self._attr_device_info = device_info(coordinator)
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(self._flow.add_listener(self.async_write_ha_state))
+
+    @property
+    def native_value(self) -> float | None:
+        return self._flow.value

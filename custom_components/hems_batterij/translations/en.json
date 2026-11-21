@@ -120,6 +120,9 @@
       },
       "ruimte_invloed_advies": {
         "name": "Room influence advice"
+      },
+      "debiet_verwarming": {
+        "name": "Heating water flow"
       }
     },
     "binary_sensor": {

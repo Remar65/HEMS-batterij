@@ -47,6 +47,9 @@ def test_vaillant_actuator_only_publishes_room_influence():
     assert set(re.findall(r'async_call\(\s*"(\w+)", "(\w+)"', text)) == {("mqtt", "publish")}
     assert set(re.findall(r'f"\{TOPIC\}/(\w+)"', text)) == {"get", "set"}
     assert 'TOPIC = "ebusd/basv2/Hc1RoomTempModulation"' in text
+    # Debiet verwarmingswater: alleen opvragen (get), nooit zetten.
+    assert set(re.findall(r'f"\{FLOW_TOPIC\}/(\w+)"', text)) == {"get"}
+    assert 'FLOW_TOPIC = "ebusd/hmu/BuildingCircuitFlow"' in text
     assert "states.async_set" not in text
 
 

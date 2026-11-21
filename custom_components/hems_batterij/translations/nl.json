@@ -120,6 +120,9 @@
       },
       "ruimte_invloed_advies": {
         "name": "Ruimte-invloed advies"
+      },
+      "debiet_verwarming": {
+        "name": "Debiet verwarming"
       }
     },
     "binary_sensor": {

@@ -20,6 +20,7 @@ import voluptuous as vol
 from . import meetlogger
 from .const import DOMAIN
 from .coordinator import HemsCoordinator
+from .ebus_debiet import HeatingFlow
 from .ruimte_invloed_ha import RoomInfluence
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.SWITCH, Platform.NUMBER]
@@ -33,10 +34,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: HemsConfigEntry) -> bool
     # Ruimte-invloed VRC (Actief/Uitgebreid): leren uit de meetlogger, advies, zelf zetten
     # alleen met de schakelaar "Ruimte-invloed automatisch" (standaard uit).
     coordinator.room_influence = RoomInfluence(hass, coordinator)
+    coordinator.heating_flow = HeatingFlow(hass)  # debiet verwarmingswater via ebusd (alleen lezen)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await coordinator.async_start()
     await coordinator.room_influence.async_start()
     entry.async_on_unload(coordinator.room_influence.async_stop)
+    await coordinator.heating_flow.async_start()
+    entry.async_on_unload(coordinator.heating_flow.async_stop)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
 
     async def _log(now: datetime) -> None:

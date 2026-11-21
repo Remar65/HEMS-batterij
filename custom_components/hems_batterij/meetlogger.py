@@ -92,6 +92,8 @@ COLUMNS: tuple[Column, ...] = (
     Column("warmteplan", "sensor.hems_batterij_warmteplan", None, numeric=False),
     # houtkachel (sensor op de muur naast de rookgaspijp, sinds 21-11-2026; was cv-hok)
     Column("kachel_c", "sensor.kachel_temperatuur"),
+    Column("debiet_lh", "sensor.hems_batterij_debiet_verwarming"),
+    Column("pomp_pct", "sensor.heating_ebusd_hmu_rundatabuildingcpumppower"),
 )
 
 HEADER: tuple[str, ...] = ("tijd", *(c.name for c in COLUMNS))

@@ -11,6 +11,9 @@ Twee dingen, allebei via MQTT naar ebusd:
   bericht; staat ebusd op alleen lezen, dan verandert er niets en ziet HEMS dat bij het
   volgende opvragen.
 
+Daarnaast vraagt HEMS elk uur het debiet van het verwarmingswater op (hmu/BuildingCircuitFlow,
+ook alleen via .../get, dus alleen lezen); zie ebus_debiet.py.
+
 Andere standen (inactief) en andere berichten kunnen hier niet worden verstuurd.
 """
 
@@ -27,6 +30,7 @@ _LOGGER = logging.getLogger(__name__)
 TOPIC = "ebusd/basv2/Hc1RoomTempModulation"
 ALLOWED_VALUES = (ACTIVE, EXPANDED)
 POLL_PAYLOAD = "?3"  # lezen en voortaan pollen met prioriteit 3
+FLOW_TOPIC = "ebusd/hmu/BuildingCircuitFlow"
 
 
 async def async_request_read(hass: HomeAssistant) -> bool:
@@ -35,6 +39,16 @@ async def async_request_read(hass: HomeAssistant) -> bool:
         return False
     await hass.services.async_call(
         "mqtt", "publish", {"topic": f"{TOPIC}/get", "payload": POLL_PAYLOAD}, blocking=True
+    )
+    return True
+
+
+async def async_request_flow_read(hass: HomeAssistant) -> bool:
+    """Ebusd het debiet van het verwarmingswater laten uitlezen (alleen lezen)."""
+    if not hass.services.has_service("mqtt", "publish"):
+        return False
+    await hass.services.async_call(
+        "mqtt", "publish", {"topic": f"{FLOW_TOPIC}/get", "payload": POLL_PAYLOAD}, blocking=True
     )
     return True
 

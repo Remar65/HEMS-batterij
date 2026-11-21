@@ -1,6 +1,7 @@
 {
   "domain": "hems_batterij",
   "name": "HEMS Batterij",
+  "after_dependencies": ["mqtt"],
   "codeowners": ["@Remar65"],
   "config_flow": true,
   "dependencies": [],
@@ -9,5 +10,5 @@
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/Remar65/HEMS-batterij/issues",
   "requirements": [],
-  "version": "0.8.0"
+  "version": "0.8.1"
 }
